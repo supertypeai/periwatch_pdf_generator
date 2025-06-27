@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-imx&cf2=bk-(v27n9)767cj%%-*0kq!@1eom&gt4c9xb^qs^+$
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['api-periwatch.up.railway.app']
 
 
 # Application definition
