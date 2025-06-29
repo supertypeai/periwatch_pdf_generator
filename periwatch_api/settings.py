@@ -11,6 +11,15 @@ https://docs.djangoproject.com/en/3.2/ref/settings/
 """
 
 from pathlib import Path
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+
+JWT_SECRET = os.environ.get("JWT_SECRET")  # Replace with a strong secret in production
+JWT_ALGORITHM = "HS256"
+JWT_EXP_DELTA_SECONDS = 3600  # Token valid for 1 hour
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -38,6 +47,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'rest_framework.authtoken',
     'api',
 ]
 
@@ -132,7 +142,10 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.AnonRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'user': '10/minute',   # Authenticated users: 10 requests per minute
-        'anon': '10/minute',    # Anonymous users: 5 requests per minute
-    }
+        'user': '50/minute',   # Authenticated users: 10 requests per minute
+        'anon': '50/minute',    # Anonymous users: 5 requests per minute
+    },
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.TokenAuthentication',
+    ]
 }
