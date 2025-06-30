@@ -38,11 +38,9 @@ class PDFReportAPIView(APIView):
     def get(self, request):
         auth_header = request.headers.get('Authorization', '')
         token = auth_header.replace('Bearer ', '')
-        try:
-            payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
-        except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
-            return Response({'detail': 'Invalid or expired token'}, status=status.HTTP_401_UNAUTHORIZED)
-
+        
+        if token !=  os.environ.get('PASSWORD'):
+            return Response({'detail': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
 
         title_text = request.GET.get('title', 'Periwatch Report')
         email_text = request.GET.get('email', 'human@supertype.ai')
