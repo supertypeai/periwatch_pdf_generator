@@ -36,11 +36,11 @@ class SupertypeTokenView(APIView):
 
 class PDFReportAPIView(APIView):
     def get(self, request):
-        auth_header = request.headers.get('Authorization', '')
-        token = auth_header.replace('Bearer ', '')
+        # auth_header = request.headers.get('Authorization', '')
+        # token = auth_header.replace('Bearer ', '')
         
-        if token !=  os.environ.get('PASSWORD'):
-            return Response({'detail': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+        # if token !=  os.environ.get('PASSWORD'):
+        #     return Response({'detail': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
 
         title_text = request.GET.get('title', 'Periwatch Report')
         email_text = request.GET.get('email', 'human@supertype.ai')

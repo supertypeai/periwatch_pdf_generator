@@ -20,65 +20,64 @@ def hex_to_rgb(hex_color):
     hex_color = hex_color.lstrip('#')
     return tuple(int(hex_color[i:i+2], 16)/255 for i in (0, 2, 4))
 
-def email_text_generator(pdf, email_text):
-    max_width = 326
-    font_name = "Inter"
-    font_size = 16
-    min_font_size = 5
+def draw_name_tag(c, text, x, y, padding_x=10, padding_y=6, fill_color=colors.white, text_color=colors.HexColor("#8B6636"),
+                  corner_radius=5, font_name="Inter-Bold", font_size=10):
+    """
+    Draws a name tag rectangle that automatically expands to fit the text.
+    - x, y: bottom-left corner of the rectangle.
+    """
+    # Measure text width
+    c.setFont(font_name, font_size)
+    text_width = c.stringWidth(text, font_name, font_size)
 
-    while font_size >= min_font_size:
-        text_width = pdfmetrics.stringWidth(email_text, font_name, font_size)
-        if text_width <= max_width:
-            break
-        font_size -= 1
+    # Total width and height with padding
+    rect_width = text_width + 2 * padding_x
+    rect_height = font_size + 2 * padding_y
 
-    pdf.setFont(font_name, font_size)
-    r, g, b = hex_to_rgb("#8B6636")
-    pdf.setFillColorRGB(r, g, b)
-    pdf.drawString(132, 100, email_text)
+    # Draw rounded rectangle
+    c.setLineWidth(2)
+    c.setStrokeColor(fill_color)
+    c.setFillColor(fill_color)
+    c.roundRect(x, y, rect_width, rect_height, corner_radius, stroke=1, fill=1)
 
-def title_text_generator(pdf, text):
-    x = 70
-    y = 158
-    max_width = 483
-    font_name = "Inter-Bold"
-    font_size = 40
+    # Draw text centered vertically and with horizontal padding
+    c.setFillColor(text_color)
+    text_x = x + padding_x
+    text_y = y + padding_y + 1
+    c.drawString(text_x, text_y, text)
 
-    words = text.split()
-    visible_words = []
-    current_width = 0
-
-    ellipsis_width = pdfmetrics.stringWidth("...", font_name, font_size)
-
-    for word in words:
-        word_to_add = word + " "
-        word_width = pdfmetrics.stringWidth(word_to_add, font_name, font_size)
-        
-        if current_width + word_width + ellipsis_width <= max_width:
-            visible_words.append(word)
-            current_width += word_width
-        else:
-            break
-
-    truncated = len(visible_words) < len(words)
-    visible_text = " ".join(visible_words)
-    if truncated:
-        visible_text += "..."
-
-    visible_words_split = visible_text.split()
-    half_index = len(visible_words_split) // 2
-    first_part = " ".join(visible_words_split[:half_index])
-    second_part = " ".join(visible_words_split[half_index:])
-
-    first_width = pdfmetrics.stringWidth(first_part.upper(), font_name, font_size)
-
-    pdf.setFont(font_name, font_size)
+def cover_text_generator(pdf,height,ticker,email_text,title_text):
+    pdf.setFont('Inter-Bold', 40)
     pdf.setFillColor(colors.white)
-    pdf.drawString(x, y, first_part.upper())
+    pdf.drawString(64,height-582-33,"Intelligence")
 
     r, g, b = hex_to_rgb("#8B6636")
     pdf.setFillColorRGB(r, g, b)
-    pdf.drawString(x + first_width, y, f" {second_part.upper()}")
+    pdf.drawString(300,height-582-33,f"Brief")
+
+    if ticker == '':
+        draw_name_tag(pdf, 'Goliath Obe Tabuni', 64, height-646-18, padding_x=10, padding_y=6, fill_color=colors.white, text_color=colors.HexColor("#8B6636"),
+                        corner_radius=5, font_name="Inter", font_size=10)
+        draw_name_tag(pdf, 'Rueb Vincent', 188, height-646-18, padding_x=10, padding_y=6, fill_color=colors.white, text_color=colors.HexColor("#8B6636"),
+                        corner_radius=5, font_name="Inter", font_size=10)
+    else:
+        draw_name_tag(pdf, ticker[:4], 64, height-646-18, padding_x=10, padding_y=6, fill_color=colors.white, text_color=colors.HexColor("#8B6636"),
+                        corner_radius=5, font_name="Inter", font_size=10)
+        draw_name_tag(pdf, 'Goliath Obe Tabuni', 124, height-646-18, padding_x=10, padding_y=6, fill_color=colors.white, text_color=colors.HexColor("#8B6636"),
+                        corner_radius=5, font_name="Inter", font_size=10)
+        draw_name_tag(pdf, 'Rueb Vincent', 248, height-646-18, padding_x=10, padding_y=6, fill_color=colors.white, text_color=colors.HexColor("#8B6636"),
+                        corner_radius=5, font_name="Inter", font_size=10)
+
+    draw_shrinking_text(pdf, title_text, 400, 64, height-690-15, font_name='Inter-Bold', initial_font_size=20, min_font_size=5, color=colors.white)
+
+    pdf.setFont('Inter', 20)
+    pdf.setFillColor(colors.white)
+    pdf.drawString(64,height-737-15,"For")
+
+    ## Email
+
+    draw_name_tag(pdf, email_text, 110, height-734-22, padding_x=10, padding_y=6, fill_color=colors.white, text_color=colors.HexColor("#8B6636"),
+                    corner_radius=5, font_name="Inter", font_size=10)
 
 def draw_shrinking_text(pdf, text, max_width, x, y, font_name='Inter-Bold', initial_font_size=30, min_font_size=5, color=colors.white):
     """
@@ -221,23 +220,13 @@ def generate_pdf(title_text, email_text, ticker):
     # Cover Page
     pdf.drawImage(os.path.join(ASSET_PATH,'cover.png'), 0, 0, width, height)
     
-    if ticker == "":
-        title_text_generator(pdf, title_text)
-        email_text_generator(pdf, email_text)
-    else:
-        pdf.setFont('Inter-Bold', 32)
-        pdf.setFillColor(colors.white)
-        pdf.drawString(70,158,"Intelligence Brief")
+    cover_text_generator(pdf,height,ticker,email_text,title_text)
 
-        r, g, b = hex_to_rgb("#8B6636")
-        pdf.setFillColorRGB(r, g, b)
-        pdf.drawString(345,158,f"of {ticker}")
-        email_text_generator(pdf, email_text)
-
-    # Ticker Page
+    # Ticker page
+    if ticker != '':
         pdf.showPage()
-        pdf.drawImage(os.path.join(ASSET_PATH,'ticker.png'), 0, 0, width, height)
-        generate_ticker_page(pdf, ticker, height)    
+        pdf.drawImage(f'api/asset/ticker.png', 0, 0, width, height)
+        generate_ticker_page(pdf, ticker, height)
 
     # Page 1
     pdf.showPage()
