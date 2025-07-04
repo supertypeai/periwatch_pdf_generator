@@ -10,6 +10,7 @@ from supabase import create_client
 from datetime import datetime
 from reportlab.lib.utils import ImageReader
 import requests
+import wikipediaapi
 
 load_dotenv()
 
@@ -209,7 +210,24 @@ def generate_ticker_page(pdf, ticker, height):
     pdf.drawString(64, height-725-12, "Commissioner")
     draw_justified_text(pdf, ', '.join(f"{s['name']} ({s['position']})" for s in ticker_profile.data[0]['comissioners']), 191, height-725-12, 348, 45, font_name="Inter", initial_font_size=10, min_font_size=5, line_spacing=2)
 
-def generate_pdf(title_text, email_text, ticker):
+def generate_company_page(pdf, company_name, height):
+    draw_shrinking_text(pdf, company_name.title(), 500, 51, 725, font_name='Inter-Bold', initial_font_size=30, min_font_size=5, color=colors.black)
+
+    wiki_wiki = wikipediaapi.Wikipedia(
+        user_agent="periwatch_pdf_generator/1.0",
+        language='en',
+        extract_format=wikipediaapi.ExtractFormat.WIKI
+    )
+
+    page_py = wiki_wiki.page(company_name)
+
+    if page_py.exists():
+        summary = page_py.summary
+        draw_justified_text(pdf, summary, 64, height-150, 464, 600, font_name="Inter", initial_font_size=10, min_font_size=5, line_spacing=2)
+    else:
+        draw_justified_text(pdf, "This company isn't available for now.", 64, height-150, 464, 140, font_name="Inter", initial_font_size=14, min_font_size=5, line_spacing=2)
+
+def generate_pdf(title_text, email_text, ticker, company):
     buffer = BytesIO()
     width, height = 595, 842
 
@@ -227,6 +245,11 @@ def generate_pdf(title_text, email_text, ticker):
         pdf.showPage()
         pdf.drawImage(f'api/asset/ticker.png', 0, 0, width, height)
         generate_ticker_page(pdf, ticker, height)
+
+    if company != '':
+        pdf.showPage()
+        pdf.setFillColor(colors.white)
+        generate_company_page(pdf, company, height)
 
     # Page 1
     pdf.showPage()
