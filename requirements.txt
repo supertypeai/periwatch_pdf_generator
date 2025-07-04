@@ -45,3 +45,4 @@ typing_extensions==4.14.0
 urllib3==2.5.0
 websockets==15.0.1
 wikipedia-api
+wptools
