@@ -11,6 +11,10 @@ from datetime import datetime
 from reportlab.lib.utils import ImageReader
 import requests
 import wikipediaapi
+import wptools
+import re
+import requests
+from spellchecker import SpellChecker
 
 load_dotenv()
 
@@ -210,22 +214,253 @@ def generate_ticker_page(pdf, ticker, height):
     pdf.drawString(64, height-725-12, "Commissioner")
     draw_justified_text(pdf, ', '.join(f"{s['name']} ({s['position']})" for s in ticker_profile.data[0]['comissioners']), 191, height-725-12, 348, 45, font_name="Inter", initial_font_size=10, min_font_size=5, line_spacing=2)
 
-def generate_company_page(pdf, company_name, height):
-    draw_shrinking_text(pdf, company_name.title(), 500, 51, 725, font_name='Inter-Bold', initial_font_size=30, min_font_size=5, color=colors.black)
+def clean_wiki_value(value):
+    if not value or value == '-':
+        return '-'
+    url_match = re.match(r'\{\{URL\|(.*?)\}\}', value)
+    if url_match:
+        return url_match.group(1)
+    value = re.sub(r'\[\[(.*?)\]\]', lambda m: m.group(1).split('|')[-1], value)
+    value = re.sub(r'\{\{.*?\}\}', '', value)
+    value = value.replace('[', '').replace(']', '').replace('|', ',')
+    return value.strip()
 
-    wiki_wiki = wikipediaapi.Wikipedia(
-        user_agent="periwatch_pdf_generator/1.0",
-        language='en',
-        extract_format=wikipediaapi.ExtractFormat.WIKI
-    )
+def get_wikidata_label(qid, lang='en'):
+    if not qid or not isinstance(qid, str) or not qid.startswith('Q'):
+        return qid
+    url = f'https://www.wikidata.org/wiki/Special:EntityData/{qid}.json'
+    try:
+        resp = requests.get(url)
+        data = resp.json()
+        entity = data['entities'][qid]
+        return entity['labels'][lang]['value']
+    except Exception:
+        return qid
 
-    page_py = wiki_wiki.page(company_name)
+def get_wikidata_info(wikibase_id):
+    url = f'https://www.wikidata.org/wiki/Special:EntityData/{wikibase_id}.json'
+    resp = requests.get(url)
+    data = resp.json()
+    entity = data['entities'][wikibase_id]
+    claims = entity['claims']
 
-    if page_py.exists():
-        summary = page_py.summary
-        draw_justified_text(pdf, summary, 64, height-150, 464, 600, font_name="Inter", initial_font_size=10, min_font_size=5, line_spacing=2)
-    else:
-        draw_justified_text(pdf, "This company isn't available for now.", 64, height-150, 464, 140, font_name="Inter", initial_font_size=14, min_font_size=5, line_spacing=2)
+    def get_value(prop, resolve_label=False):
+        if prop in claims:
+            mainsnak = claims[prop][0]['mainsnak']
+            datavalue = mainsnak.get('datavalue', {})
+            value = datavalue.get('value')
+            if isinstance(value, dict):
+                if 'text' in value:
+                    return value['text']
+                elif 'id' in value and resolve_label:
+                    return get_wikidata_label(value['id'])
+                elif 'time' in value:
+                    date_str = value['time']
+                    return date_str[1:11]
+            elif isinstance(value, str):
+                return value
+        return '-'
+
+    website = get_value('P856')
+    industry = get_value('P452', resolve_label=True)
+    official_name = get_value('P1448')
+    logo = get_value('P154')
+    address = get_value('P6375')
+    inception = get_value('P571', resolve_label=True)
+    if not address or address == '-':
+        address = get_value('P159', resolve_label=True)
+
+    return {'website': website, 'industry': industry, 'official_name': official_name, 'logo': logo, 'address': address, 'inception': inception}
+
+def try_wikipedia_variants(company_name):
+    wiki = wikipediaapi.Wikipedia(user_agent="periwatch_pdf_generator/1.0", language='en', extract_format=wikipediaapi.ExtractFormat.WIKI)
+    variants = [
+        company_name
+        # company_name.title(),
+        # company_name.lower(),
+        # company_name.upper()
+    ]
+    for name in variants:
+        page = wiki.page(name)
+        if page.exists():
+            return page, name
+    # If not found, try Wikipedia search suggest
+    suggested = wikipedia_search_suggest(company_name)
+    if suggested:
+        page = wiki.page(suggested)
+        if page.exists():
+            return page, suggested
+    return None, company_name
+
+def try_wptools_variants(company_name):
+    variants = [
+        company_name
+        # company_name.title(),
+        # company_name.lower(),
+        # company_name.upper()
+    ]
+    for name in variants:
+        page = wptools.page(name, lang='en')
+        try:
+            page.get_parse()
+            if page.data.get('wikibase'):
+                return page, name
+        except Exception:
+            continue
+    # If not found, try Wikipedia search suggest
+    suggested = wikipedia_search_suggest(company_name)
+    if suggested:
+        page = wptools.page(suggested, lang='en')
+        try:
+            page.get_parse()
+            if page.data.get('wikibase'):
+                return page, suggested
+        except Exception:
+            pass
+    return None, company_name
+
+def wikipedia_search_suggest(query):
+    url = f'https://en.wikipedia.org/w/api.php'
+    params = {
+        'action': 'opensearch',
+        'search': query,
+        'limit': 1,
+        'namespace': 0,
+        'format': 'json'
+    }
+    try:
+        resp = requests.get(url, params=params)
+        data = resp.json()
+        if data and len(data) > 1 and data[1]:
+            return data[1][0]
+    except Exception:
+        pass
+    return None
+
+def is_company_wikidata(wikibase_id):
+    """Return True if the Wikidata entity is a company/organization."""
+    company_qids = {
+        "Q783794",      # enterprise
+        "Q43229",       # state-owned enterprise (BUMN)
+        "Q6881511",     # corporation
+        "Q167037",      # public company
+        "Q4830453",     # business
+        "Q891723",      # subsidiary
+        "Q1370346",     # private company
+        "Q2221906",     # holding company
+        "Q15911313",    # limited liability company
+        "Q161604",      # cooperative
+        "Q1921501",     # sole proprietorship (usaha perorangan)
+        "Q159433",      # partnership
+        "Q163740",      # non-profit organization
+    }
+    url = f'https://www.wikidata.org/wiki/Special:EntityData/{wikibase_id}.json'
+    try:
+        resp = requests.get(url)
+        data = resp.json()
+        entity = data['entities'][wikibase_id]
+        claims = entity.get('claims', {})
+        if 'P31' in claims:
+            for claim in claims['P31']:
+                mainsnak = claim.get('mainsnak', {})
+                datavalue = mainsnak.get('datavalue', {})
+                value = datavalue.get('value', {})
+                if isinstance(value, dict) and value.get('id') in company_qids:
+                    print(f"Wikidata entity {wikibase_id} is a company.")
+                    return True
+            print(f"Wikidata entity {wikibase_id} is not a company.")
+        return False
+    except Exception:
+        return False
+    
+def smart_query(query):
+    """
+    Enhanced function to clean and correct a query before searching Wikipedia.
+    """
+    spell = SpellChecker(language='en')
+
+    delete_text = ['pt', 'cv', 'tbk', 'persero', 'inc', 'corp', 'ltd']
+    
+    words = query.lower().split()
+    
+    # Step 1: Delete unwanted prefixes
+    clean_words = [word for word in words if word not in delete_text]
+    clean_query = ' '.join(clean_words)
+
+    to_be_corrected = clean_query.split()
+    
+    miss_spelled = spell.unknown(to_be_corrected)
+    
+    # Step 2: Correct spelling errors
+    final_words = []
+    for word in to_be_corrected:
+        if word in miss_spelled:
+            correction = spell.correction(word)
+            final_words.append(correction if correction is not None else word)
+        else:
+            final_words.append(word)
+            
+    query_final = ' '.join(final_words)
+    
+    print(f"Input asli: '{query}' -> Query setelah dibersihkan & dikoreksi: '{query_final}'")
+
+    suggest = wikipedia_search_suggest(query_final)
+    
+    if not suggest:
+        suggest = wikipedia_search_suggest(clean_query)
+        
+    if not suggest:
+        suggest = wikipedia_search_suggest(query)
+        
+    return suggest
+
+def get_corrected_wikidata_id(company_name):
+    # Try Wikipedia and Wikidata with several case variants
+    company_name = smart_query(company_name)
+    page_py, used_name = try_wikipedia_variants(company_name)
+    page, _ = try_wptools_variants(company_name)
+    summary = page_py.summary if page_py else ''
+    wikibase_id = page.data.get('wikibase') if page else None
+    return wikibase_id, used_name, summary
+
+def generate_company_page(pdf, wikibase_id, height, used_name, summary):
+    # Check if the Wikidata entity is a company
+    if wikibase_id and not is_company_wikidata(wikibase_id):
+        return is_company_wikidata(wikibase_id)
+    
+    wikidata = get_wikidata_info(wikibase_id) if wikibase_id else {}
+    website = wikidata.get('website', '-')
+    address = wikidata.get('address', '-')
+    industry = wikidata.get('industry', '-')
+    logo = wikidata.get('logo', None)
+    official_name = wikidata.get('official_name', '-')
+    date = wikidata.get('inception', '-')
+
+    # Draw company name (official name)
+    draw_shrinking_text(pdf, (official_name if official_name != '-' else used_name).title(), 500, 51, 725, font_name='Inter-Bold', initial_font_size=30, min_font_size=5, color=colors.black)
+
+    # Draw logo if available
+    if logo and logo != '-':
+        image_url = f'https://commons.wikimedia.org/wiki/Special:FilePath/{logo}'
+        try:
+            img_data = requests.get(image_url).content
+            image = ImageReader(BytesIO(img_data))
+            pdf.drawImage(image, 104, height-188-54, 54, 54, mask="auto")
+        except Exception:
+            pass
+
+    # Draw additional info
+    pdf.setFont('Inter-Bold', 10)
+    if website and website != '-':
+        pdf.drawString(64, height-150, f"Website: {website}")
+    if address and address != '-':
+        pdf.drawString(64, height-170, f"Address: {address}")
+    if industry and industry != '-':
+        pdf.drawString(64, height-190, f"Industry: {industry}")
+    if date and date != '-':
+        pdf.drawString(64, height-210, f"Establishment Date: {date}")
+
+    draw_justified_text(pdf, summary, 64, height-235, 464, 600, font_name="Inter", initial_font_size=10, min_font_size=5, line_spacing=2)
 
 def generate_pdf(title_text, email_text, ticker, company):
     buffer = BytesIO()
@@ -237,7 +472,6 @@ def generate_pdf(title_text, email_text, ticker, company):
 
     # Cover Page
     pdf.drawImage(os.path.join(ASSET_PATH,'cover.png'), 0, 0, width, height)
-    
     cover_text_generator(pdf,height,ticker,email_text,title_text)
 
     # Ticker page
@@ -247,9 +481,11 @@ def generate_pdf(title_text, email_text, ticker, company):
         generate_ticker_page(pdf, ticker, height)
 
     if company != '':
-        pdf.showPage()
-        pdf.setFillColor(colors.white)
-        generate_company_page(pdf, company, height)
+        wikibase_id, used_name, summary = get_corrected_wikidata_id(company)
+        if is_company_wikidata(wikibase_id) and summary != '':
+            pdf.showPage()
+            pdf.setFillColor(colors.white)
+            generate_company_page(pdf, wikibase_id, height, used_name, summary)
 
     # Page 1
     pdf.showPage()

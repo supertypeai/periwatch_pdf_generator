@@ -46,6 +46,8 @@ class PDFReportAPIView(APIView):
         email_text = request.GET.get('email', 'human@supertype.ai')
         ticker = request.GET.get('ticker', '')
         company = request.GET.get('company', '')
+        if company:
+            company = company.strip()
 
         pdf_buffer = generate_pdf(title_text, email_text, ticker, company)
 
