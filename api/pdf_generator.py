@@ -15,6 +15,8 @@ import wptools
 import re
 import requests
 from spellchecker import SpellChecker
+import cairosvg
+from PIL import Image
 
 load_dotenv()
 
@@ -353,6 +355,8 @@ def is_company_wikidata(wikibase_id):
         "Q1921501",     # sole proprietorship (usaha perorangan)
         "Q159433",      # partnership
         "Q163740",      # non-profit organization
+        "Q1058914",     # software company
+        "Q1055701",     # computer manufacturing company
     }
     url = f'https://www.wikidata.org/wiki/Special:EntityData/{wikibase_id}.json'
     try:
@@ -424,9 +428,7 @@ def get_corrected_wikidata_id(company_name):
     return wikibase_id, used_name, summary
 
 def generate_company_page(pdf, wikibase_id, height, used_name, summary):
-    # Check if the Wikidata entity is a company
-    if wikibase_id and not is_company_wikidata(wikibase_id):
-        return is_company_wikidata(wikibase_id)
+    pdf.drawImage(os.path.join(ASSET_PATH, 'company.png'), 0, 0, 595, 842)
     
     wikidata = get_wikidata_info(wikibase_id) if wikibase_id else {}
     website = wikidata.get('website', '-')
@@ -437,30 +439,67 @@ def generate_company_page(pdf, wikibase_id, height, used_name, summary):
     date = wikidata.get('inception', '-')
 
     # Draw company name (official name)
-    draw_shrinking_text(pdf, (official_name if official_name != '-' else used_name).title(), 500, 51, 725, font_name='Inter-Bold', initial_font_size=30, min_font_size=5, color=colors.black)
+    draw_shrinking_text(pdf, (official_name if official_name != '-' else used_name).title(), 500, 51, 725, font_name='Inter-Bold', initial_font_size=30, min_font_size=5, color=colors.white)
 
     # Draw logo if available
     if logo and logo != '-':
-        image_url = f'https://commons.wikimedia.org/wiki/Special:FilePath/{logo}'
+        image_url = f'https://commons.wikimedia.org/wiki/Special:FilePath/{logo.replace(" ", "_")}' # Ganti spasi dengan underscore
+
         try:
-            img_data = requests.get(image_url).content
-            image = ImageReader(BytesIO(img_data))
-            pdf.drawImage(image, 104, height-188-54, 54, 54, mask="auto")
-        except Exception:
-            pass
+            headers = {'User-Agent': 'CompanyReportGenerator/1.0 (contact@example.com)'}
+            img_resp = requests.get(image_url, allow_redirects=True, stream=True, timeout=10, headers=headers)
+            
+            if img_resp.status_code == 200:
+                content_type = img_resp.headers.get('Content-Type', '')
+                image_content = img_resp.content
+                final_image_bytes = None
+                # Convert SVG to PNG if necessary
+                if 'svg' in content_type or logo.lower().endswith('.svg'):
+                    png_bytes = cairosvg.svg2png(bytestring=image_content)
+                    image = ImageReader(BytesIO(png_bytes))
+                    img_for_size = Image.open(BytesIO(png_bytes))
+                else:
+                    image = ImageReader(BytesIO(image_content))
+                    img_for_size = Image.open(BytesIO(image_content))
 
-    # Draw additional info
-    pdf.setFont('Inter-Bold', 10)
-    if website and website != '-':
-        pdf.drawString(64, height-150, f"Website: {website}")
-    if address and address != '-':
-        pdf.drawString(64, height-170, f"Address: {address}")
-    if industry and industry != '-':
-        pdf.drawString(64, height-190, f"Industry: {industry}")
+                # Ambil ukuran asli gambar
+                original_width, original_height = img_for_size.size
+                max_width = 120
+                max_height = 120
+                ratio = min(max_width / original_width, max_height / original_height)
+                new_width = original_width * ratio
+                new_height = original_height * ratio
+                x_pos = 90 + (max_width - new_width) / 2
+                y_pos = (height - 248 - 54) + (max_height - new_height) / 2
+
+                pdf.drawImage(image, x_pos, y_pos, new_width, new_height, mask="auto")
+
+        except Exception as e:
+            print(f"🔥 Terjadi kesalahan tak terduga saat memproses gambar: {e}")
+
+    # Website
+    draw_shrinking_text(pdf, website if website != '-' else '', 117, 251, height-217-12, font_name='Inter-Bold', initial_font_size=10, min_font_size=5, color=colors.white)
+
+    # Address
+    draw_justified_text(pdf, address if address != '-' else '', 251, height-286-12, 147, 36, font_name="Inter-Bold", initial_font_size=10, min_font_size=5, line_spacing=2)
+
+    # Industry
+    draw_shrinking_text(pdf, industry.title() if industry != '-' else '', 117, 401, height-217-12, font_name='Inter-Bold', initial_font_size=10, min_font_size=5, color=colors.white)
+
+    # Listing date (pakai inception)
     if date and date != '-':
-        pdf.drawString(64, height-210, f"Establishment Date: {date}")
+        try:
+            # Jika date sudah format YYYY-MM-DD
+            dt = datetime.strptime(date, '%Y-%m-%d')
+            date_str = dt.strftime('%d %B %Y').title()
+        except Exception:
+            date_str = date
+        pdf.drawString(401, height-286-12, date_str)
+    else:
+        pdf.drawString(401, height-286-12, "")
 
-    draw_justified_text(pdf, summary, 64, height-235, 464, 600, font_name="Inter", initial_font_size=10, min_font_size=5, line_spacing=2)
+    # Company brief description
+    draw_justified_text(pdf, summary, 64, height-396-12, 464, 140, font_name="Inter", initial_font_size=14, min_font_size=5, line_spacing=2)
 
 def generate_pdf(title_text, email_text, ticker, company):
     buffer = BytesIO()

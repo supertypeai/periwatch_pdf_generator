@@ -48,6 +48,7 @@ class PDFReportAPIView(APIView):
         company = request.GET.get('company', '')
         if company:
             company = company.strip()
+            company = ' '.join([w.capitalize() for w in company.split()])
 
         pdf_buffer = generate_pdf(title_text, email_text, ticker, company)
 
