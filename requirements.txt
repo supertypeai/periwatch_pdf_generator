@@ -52,3 +52,4 @@ typing_extensions==4.14.0
 urllib3==2.5.0
 webencodings==0.5.1
 websockets==15.0.1
+Wikipedia-API==0.8.1
