@@ -45,8 +45,12 @@ class PDFReportAPIView(APIView):
         title_text = request.GET.get('title', 'Periwatch Report')
         email_text = request.GET.get('email', 'human@supertype.ai')
         ticker = request.GET.get('ticker', '')
+        company = request.GET.get('company', '')
+        if company:
+            company = company.strip()
+            company = ' '.join([w.capitalize() for w in company.split()])
 
-        pdf_buffer = generate_pdf(title_text, email_text,ticker)
+        pdf_buffer = generate_pdf(title_text, email_text, ticker, company)
 
         response = HttpResponse(pdf_buffer, content_type='application/pdf')
         response['Content-Disposition'] = f'attachment; filename="{title_text}.pdf"'
