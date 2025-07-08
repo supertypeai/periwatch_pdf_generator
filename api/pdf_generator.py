@@ -54,7 +54,7 @@ def draw_name_tag(c, text, x, y, padding_x=10, padding_y=6, fill_color=colors.wh
     text_y = y + padding_y + 1
     c.drawString(text_x, text_y, text)
 
-def cover_text_generator(pdf,height,ticker,email_text,title_text):
+def cover_text_generator(pdf, height, ticker, email_text, title_text, company):
     pdf.setFont('Inter-Bold', 40)
     pdf.setFillColor(colors.white)
     pdf.drawString(64,height-582-33,"Intelligence")
@@ -63,17 +63,20 @@ def cover_text_generator(pdf,height,ticker,email_text,title_text):
     pdf.setFillColorRGB(r, g, b)
     pdf.drawString(300,height-582-33,f"Brief")
 
-    if ticker == '':
+    if ticker == '' and company == '':
         draw_name_tag(pdf, 'Goliath Obe Tabuni', 64, height-646-18, padding_x=10, padding_y=6, fill_color=colors.white, text_color=colors.HexColor("#8B6636"),
                         corner_radius=5, font_name="Inter", font_size=10)
         draw_name_tag(pdf, 'Rueb Vincent', 188, height-646-18, padding_x=10, padding_y=6, fill_color=colors.white, text_color=colors.HexColor("#8B6636"),
                         corner_radius=5, font_name="Inter", font_size=10)
-    else:
+    elif ticker != '' and company == '':
         draw_name_tag(pdf, ticker[:4], 64, height-646-18, padding_x=10, padding_y=6, fill_color=colors.white, text_color=colors.HexColor("#8B6636"),
                         corner_radius=5, font_name="Inter", font_size=10)
         draw_name_tag(pdf, 'Goliath Obe Tabuni', 124, height-646-18, padding_x=10, padding_y=6, fill_color=colors.white, text_color=colors.HexColor("#8B6636"),
                         corner_radius=5, font_name="Inter", font_size=10)
         draw_name_tag(pdf, 'Rueb Vincent', 248, height-646-18, padding_x=10, padding_y=6, fill_color=colors.white, text_color=colors.HexColor("#8B6636"),
+                        corner_radius=5, font_name="Inter", font_size=10)
+    elif ticker == '' and company != '':
+        draw_name_tag(pdf, company, 64, height-646-18, padding_x=10, padding_y=6, fill_color=colors.white, text_color=colors.HexColor("#8B6636"),
                         corner_radius=5, font_name="Inter", font_size=10)
 
     draw_shrinking_text(pdf, title_text, 400, 64, height-690-15, font_name='Inter-Bold', initial_font_size=20, min_font_size=5, color=colors.white)
@@ -275,53 +278,6 @@ def get_wikidata_info(wikibase_id):
 
     return {'website': website, 'industry': industry, 'official_name': official_name, 'logo': logo, 'address': address, 'inception': inception}
 
-def try_wikipedia_variants(company_name):
-    wiki = wikipediaapi.Wikipedia(user_agent="periwatch_pdf_generator/1.0", language='en', extract_format=wikipediaapi.ExtractFormat.WIKI)
-    variants = [
-        company_name
-        # company_name.title(),
-        # company_name.lower(),
-        # company_name.upper()
-    ]
-    for name in variants:
-        page = wiki.page(name)
-        if page.exists():
-            return page, name
-    # If not found, try Wikipedia search suggest
-    suggested = wikipedia_search_suggest(company_name)
-    if suggested:
-        page = wiki.page(suggested)
-        if page.exists():
-            return page, suggested
-    return None, company_name
-
-def try_wptools_variants(company_name):
-    variants = [
-        company_name
-        # company_name.title(),
-        # company_name.lower(),
-        # company_name.upper()
-    ]
-    for name in variants:
-        page = wptools.page(name, lang='en')
-        try:
-            page.get_parse()
-            if page.data.get('wikibase'):
-                return page, name
-        except Exception:
-            continue
-    # If not found, try Wikipedia search suggest
-    suggested = wikipedia_search_suggest(company_name)
-    if suggested:
-        page = wptools.page(suggested, lang='en')
-        try:
-            page.get_parse()
-            if page.data.get('wikibase'):
-                return page, suggested
-        except Exception:
-            pass
-    return None, company_name
-
 def wikipedia_search_suggest_list(query, limit=5):
     """Returns a list of Wikipedia search suggestions."""
     url = 'https://en.wikipedia.org/w/api.php'
@@ -343,24 +299,6 @@ def wikipedia_search_suggest_list(query, limit=5):
         print(f"API request failed: {e}")
     # Return an empty list if anything goes wrong
     return []
-
-def wikipedia_search_suggest(query):
-    url = f'https://en.wikipedia.org/w/api.php'
-    params = {
-        'action': 'opensearch',
-        'search': query,
-        'limit': 1,
-        'namespace': 0,
-        'format': 'json'
-    }
-    try:
-        resp = requests.get(url, params=params)
-        data = resp.json()
-        if data and len(data) > 1 and data[1]:
-            return data[1][0]
-    except Exception:
-        pass
-    return None
 
 def is_company_wikidata(wikibase_id):
     """Return True if the Wikidata entity is a company/organization."""
@@ -410,14 +348,14 @@ def smart_query(query):
     delete_text = ['pt', 'cv', 'tbk', 'persero', 'inc', 'corp', 'ltd']
     words = query.lower().split()
     
-    # Step 1: Delete unwanted prefixes
+    # Delete unwanted prefixes
     clean_words = [word for word in words if word not in delete_text]
     clean_query = ' '.join(clean_words)
 
     to_be_corrected = clean_query.split()
     miss_spelled = spell.unknown(to_be_corrected)
     
-    # Step 2: Correct spelling errors
+    # Correct spelling errors
     final_words = []
     for word in to_be_corrected:
         if word in miss_spelled:
@@ -430,46 +368,22 @@ def smart_query(query):
     
     print(f"Input asli: '{query}' -> Query setelah dibersihkan & dikoreksi: '{query_final}'")
     return query_final
-    # suggest = wikipedia_search_suggest(query_final)
-    # if not suggest:
-    #     suggest = wikipedia_search_suggest(clean_query)
-    # if not suggest:
-    #     suggest = wikipedia_search_suggest(query)
-    # return suggest
-
-def get_corrected_wikidata_id(company_name):
-    # Try Wikipedia and Wikidata with several case variants
-    company_name = wikipedia_search_suggest(company_name)
-    page_py, used_name = try_wikipedia_variants(company_name)
-    page, _ = try_wptools_variants(company_name)
-    summary = page_py.summary if page_py else ''
-    wikibase_id = page.data.get('wikibase') if page else None
-    if is_company_wikidata(wikibase_id) and summary != '':
-        return wikibase_id, company_name, summary
-    company_name = smart_query(company_name)
-    page_py, used_name = try_wikipedia_variants(company_name)
-    page, _ = try_wptools_variants(company_name)
-    summary = page_py.summary if page_py else ''
-    wikibase_id = page.data.get('wikibase') if page else None
-    return wikibase_id, used_name, summary
 
 def find_company_page(company_name):
     """
     Searches for a company on Wikipedia and returns its validated Wikidata ID,
     page title, and summary. It ensures the found page corresponds to a company entity.
     """
-    # Use your smart_query to clean the initial name
     cleaned_name = smart_query(company_name) or company_name
     
     # Create a list of queries to try, from most to least specific
     search_queries = [
-        cleaned_name,
         company_name,
+        cleaned_name,
         f"{cleaned_name} (company)",
         f"{cleaned_name} Corporation"
     ]
 
-    # Keep track of pages we've already checked to avoid redundant API calls
     checked_pages = set()
 
     for query in search_queries:
@@ -519,7 +433,7 @@ def generate_company_page(pdf, wikibase_id, height, used_name, summary):
 
     # Draw logo if available
     if logo and logo != '-':
-        image_url = f'https://commons.wikimedia.org/wiki/Special:FilePath/{logo.replace(" ", "_")}' # Ganti spasi dengan underscore
+        image_url = f'https://commons.wikimedia.org/wiki/Special:FilePath/{logo.replace(" ", "_")}'
 
         try:
             headers = {'User-Agent': 'CompanyReportGenerator/1.0 (contact@example.com)'}
@@ -538,7 +452,7 @@ def generate_company_page(pdf, wikibase_id, height, used_name, summary):
                     image = ImageReader(BytesIO(image_content))
                     img_for_size = Image.open(BytesIO(image_content))
 
-                # Ambil ukuran asli gambar
+                # Calculate dimensions for the image
                 original_width, original_height = img_for_size.size
                 max_width = 120
                 max_height = 120
@@ -551,7 +465,7 @@ def generate_company_page(pdf, wikibase_id, height, used_name, summary):
                 pdf.drawImage(image, x_pos, y_pos, new_width, new_height, mask="auto")
 
         except Exception as e:
-            print(f"🔥 Terjadi kesalahan tak terduga saat memproses gambar: {e}")
+            print(f"The image cannot be loaded: {e}")
 
     # Website
     draw_shrinking_text(pdf, website if website != '-' else '', 117, 251, height-217-12, font_name='Inter-Bold', initial_font_size=10, min_font_size=5, color=colors.white)
@@ -562,10 +476,9 @@ def generate_company_page(pdf, wikibase_id, height, used_name, summary):
     # Industry
     draw_shrinking_text(pdf, industry.title() if industry != '-' else '', 117, 401, height-217-12, font_name='Inter-Bold', initial_font_size=10, min_font_size=5, color=colors.white)
 
-    # Listing date (pakai inception)
+    # Listing date (inception)
     if date and date != '-':
         try:
-            # Jika date sudah format YYYY-MM-DD
             dt = datetime.strptime(date, '%Y-%m-%d')
             date_str = dt.strftime('%d %B %Y').title()
         except Exception:
@@ -587,7 +500,13 @@ def generate_pdf(title_text, email_text, ticker, company):
 
     # Cover Page
     pdf.drawImage(os.path.join(ASSET_PATH,'cover.png'), 0, 0, width, height)
-    cover_text_generator(pdf, height, company, email_text, title_text)
+    
+    if company != '':
+        wikibase_id, used_name, summary = find_company_page(company)
+        if wikibase_id:
+            cover_text_generator(pdf, height, ticker, email_text, title_text, used_name)
+        else:
+            cover_text_generator(pdf, height, ticker, email_text, title_text, '')
     pdf.showPage()
 
     # Ticker page
@@ -596,11 +515,9 @@ def generate_pdf(title_text, email_text, ticker, company):
         generate_ticker_page(pdf, ticker, height)
         pdf.showPage()
 
-    if company != '':
-        wikibase_id, used_name, summary = find_company_page(company)
-        if wikibase_id:
-            generate_company_page(pdf, wikibase_id, 842, used_name, summary)
-            pdf.showPage()
+    if company != '' and wikibase_id:
+        generate_company_page(pdf, wikibase_id, 842, used_name, summary)
+        pdf.showPage()
 
     # Page 1
     pdf.drawImage(os.path.join(ASSET_PATH,'goliath.png'), 0, 0, width, height)
