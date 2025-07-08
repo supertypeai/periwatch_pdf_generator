@@ -17,6 +17,7 @@ import requests
 from spellchecker import SpellChecker
 import cairosvg
 from PIL import Image
+import unicodedata
 
 load_dotenv()
 
@@ -321,6 +322,28 @@ def try_wptools_variants(company_name):
             pass
     return None, company_name
 
+def wikipedia_search_suggest_list(query, limit=5):
+    """Returns a list of Wikipedia search suggestions."""
+    url = 'https://en.wikipedia.org/w/api.php'
+    params = {
+        'action': 'opensearch',
+        'search': query,
+        'limit': limit,
+        'namespace': 0,
+        'format': 'json'
+    }
+    try:
+        resp = requests.get(url, params=params)
+        resp.raise_for_status()  # Raise an exception for bad status codes
+        data = resp.json()
+        if data and len(data) > 1 and data[1]:
+            # Return the whole list of suggestions
+            return data[1]
+    except Exception as e:
+        print(f"API request failed: {e}")
+    # Return an empty list if anything goes wrong
+    return []
+
 def wikipedia_search_suggest(query):
     url = f'https://en.wikipedia.org/w/api.php'
     params = {
@@ -381,10 +404,10 @@ def smart_query(query):
     """
     Enhanced function to clean and correct a query before searching Wikipedia.
     """
+    if not query or not isinstance(query, str):
+        return None
     spell = SpellChecker(language='en')
-
     delete_text = ['pt', 'cv', 'tbk', 'persero', 'inc', 'corp', 'ltd']
-    
     words = query.lower().split()
     
     # Step 1: Delete unwanted prefixes
@@ -392,7 +415,6 @@ def smart_query(query):
     clean_query = ' '.join(clean_words)
 
     to_be_corrected = clean_query.split()
-    
     miss_spelled = spell.unknown(to_be_corrected)
     
     # Step 2: Correct spelling errors
@@ -407,25 +429,77 @@ def smart_query(query):
     query_final = ' '.join(final_words)
     
     print(f"Input asli: '{query}' -> Query setelah dibersihkan & dikoreksi: '{query_final}'")
-
-    suggest = wikipedia_search_suggest(query_final)
-    
-    if not suggest:
-        suggest = wikipedia_search_suggest(clean_query)
-        
-    if not suggest:
-        suggest = wikipedia_search_suggest(query)
-        
-    return suggest
+    return query_final
+    # suggest = wikipedia_search_suggest(query_final)
+    # if not suggest:
+    #     suggest = wikipedia_search_suggest(clean_query)
+    # if not suggest:
+    #     suggest = wikipedia_search_suggest(query)
+    # return suggest
 
 def get_corrected_wikidata_id(company_name):
     # Try Wikipedia and Wikidata with several case variants
+    company_name = wikipedia_search_suggest(company_name)
+    page_py, used_name = try_wikipedia_variants(company_name)
+    page, _ = try_wptools_variants(company_name)
+    summary = page_py.summary if page_py else ''
+    wikibase_id = page.data.get('wikibase') if page else None
+    if is_company_wikidata(wikibase_id) and summary != '':
+        return wikibase_id, company_name, summary
     company_name = smart_query(company_name)
     page_py, used_name = try_wikipedia_variants(company_name)
     page, _ = try_wptools_variants(company_name)
     summary = page_py.summary if page_py else ''
     wikibase_id = page.data.get('wikibase') if page else None
     return wikibase_id, used_name, summary
+
+def find_company_page(company_name):
+    """
+    Searches for a company on Wikipedia and returns its validated Wikidata ID,
+    page title, and summary. It ensures the found page corresponds to a company entity.
+    """
+    # Use your smart_query to clean the initial name
+    cleaned_name = smart_query(company_name) or company_name
+    
+    # Create a list of queries to try, from most to least specific
+    search_queries = [
+        cleaned_name,
+        company_name,
+        f"{cleaned_name} (company)",
+        f"{cleaned_name} Corporation"
+    ]
+
+    # Keep track of pages we've already checked to avoid redundant API calls
+    checked_pages = set()
+
+    for query in search_queries:
+        suggestions = wikipedia_search_suggest_list(query)
+        for suggestion in suggestions:
+            if suggestion in checked_pages:
+                continue
+            checked_pages.add(suggestion)
+
+            print(f"Validating suggestion: '{suggestion}'...")
+            try:
+                # Use wptools to get the wikibase_id
+                page = wptools.page(suggestion, lang='en', silent=True)
+                page.get_parse()
+                wikibase_id = page.data.get('wikibase')
+
+                if wikibase_id:
+                    # Validate if the wikidata entity is a company
+                    if is_company_wikidata(wikibase_id):
+                        # Use wikipedia-api to get a clean summary
+                        wiki_api = wikipediaapi.Wikipedia(user_agent="Periwatch/1.0", language='en')
+                        page_py = wiki_api.page(suggestion)
+                        
+                        if page_py.exists():
+                            return wikibase_id, suggestion, page_py.summary
+            except Exception:
+                # Ignore errors from suggestions that don't lead to a valid page
+                continue
+    
+    return None, company_name, ""
 
 def generate_company_page(pdf, wikibase_id, height, used_name, summary):
     pdf.drawImage(os.path.join(ASSET_PATH, 'company.png'), 0, 0, 595, 842)
@@ -438,8 +512,10 @@ def generate_company_page(pdf, wikibase_id, height, used_name, summary):
     official_name = wikidata.get('official_name', '-')
     date = wikidata.get('inception', '-')
 
-    # Draw company name (official name)
-    draw_shrinking_text(pdf, (official_name if official_name != '-' else used_name).title(), 500, 51, 725, font_name='Inter-Bold', initial_font_size=30, min_font_size=5, color=colors.white)
+    if contains_non_ascii(official_name) or official_name == '-':
+        draw_shrinking_text(pdf, used_name, 500, 51, 725, font_name='Inter-Bold', initial_font_size=30, min_font_size=5, color=colors.white)
+    else:
+        draw_shrinking_text(pdf, official_name, 500, 51, 725, font_name='Inter-Bold', initial_font_size=30, min_font_size=5, color=colors.white)
 
     # Draw logo if available
     if logo and logo != '-':
@@ -499,7 +575,7 @@ def generate_company_page(pdf, wikibase_id, height, used_name, summary):
         pdf.drawString(401, height-286-12, "")
 
     # Company brief description
-    draw_justified_text(pdf, summary, 64, height-396-12, 464, 140, font_name="Inter", initial_font_size=14, min_font_size=5, line_spacing=2)
+    draw_justified_text(pdf, summary, 64, height-396-12, 464, 140, font_name="Inter", initial_font_size=14, min_font_size=10, line_spacing=2)
 
 def generate_pdf(title_text, email_text, ticker, company):
     buffer = BytesIO()
@@ -511,33 +587,46 @@ def generate_pdf(title_text, email_text, ticker, company):
 
     # Cover Page
     pdf.drawImage(os.path.join(ASSET_PATH,'cover.png'), 0, 0, width, height)
-    cover_text_generator(pdf,height,ticker,email_text,title_text)
+    cover_text_generator(pdf, height, company, email_text, title_text)
+    pdf.showPage()
 
     # Ticker page
     if ticker != '':
-        pdf.showPage()
         pdf.drawImage(f'api/asset/ticker.png', 0, 0, width, height)
         generate_ticker_page(pdf, ticker, height)
+        pdf.showPage()
 
     if company != '':
-        wikibase_id, used_name, summary = get_corrected_wikidata_id(company)
-        if is_company_wikidata(wikibase_id) and summary != '':
+        wikibase_id, used_name, summary = find_company_page(company)
+        if wikibase_id:
+            generate_company_page(pdf, wikibase_id, 842, used_name, summary)
             pdf.showPage()
-            pdf.setFillColor(colors.white)
-            generate_company_page(pdf, wikibase_id, height, used_name, summary)
 
     # Page 1
-    pdf.showPage()
     pdf.drawImage(os.path.join(ASSET_PATH,'goliath.png'), 0, 0, width, height)
+    pdf.showPage()
 
     # Page 2
-    pdf.showPage()
     pdf.drawImage(os.path.join(ASSET_PATH,'vincent.png'), 0, 0, width, height)
+    pdf.showPage()
 
     # CTA
-    pdf.showPage()
     pdf.drawImage(os.path.join(ASSET_PATH,'cta.png'), 0, 0, width, height)
+    pdf.showPage()
 
     pdf.save()
     buffer.seek(0)
     return buffer
+
+def contains_non_ascii(text):
+    for char in text:
+        code = ord(char)
+        if (0x4E00 <= code <= 0x9FFF) or \
+            (0xAC00 <= code <= 0xD7A3) or \
+            (0x3040 <= code <= 0x309F) or \
+            (0x30A0 <= code <= 0x30FF):
+            return True
+        category = unicodedata.category(char)
+        if category.startswith('C'):
+            return True
+    return False
