@@ -17,16 +17,19 @@ gunicorn==23.0.0
 h11==0.16.0
 h2==4.2.0
 hpack==4.1.0
+html2text==2025.4.15
 httpcore==1.0.9
 httpx==0.28.1
 hyperframe==6.1.0
 idna==3.10
 iniconfig==2.1.0
+lxml==6.0.0
 packaging==25.0
 pillow==11.2.1
 pluggy==1.6.0
 postgrest==1.1.1
 pycparser==2.22
+pycurl==7.45.6
 pydantic==2.11.7
 pydantic_core==2.33.2
 Pygments==2.19.2
@@ -53,3 +56,4 @@ urllib3==2.5.0
 webencodings==0.5.1
 websockets==15.0.1
 Wikipedia-API==0.8.1
+wptools==0.4.17
