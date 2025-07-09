@@ -76,8 +76,20 @@ def cover_text_generator(pdf, height, ticker, email_text, title_text, company):
         draw_name_tag(pdf, 'Rueb Vincent', 248, height-646-18, padding_x=10, padding_y=6, fill_color=colors.white, text_color=colors.HexColor("#8B6636"),
                         corner_radius=5, font_name="Inter", font_size=10)
     elif ticker == '' and company != '':
-        draw_name_tag(pdf, company, 64, height-646-18, padding_x=10, padding_y=6, fill_color=colors.white, text_color=colors.HexColor("#8B6636"),
-                        corner_radius=5, font_name="Inter", font_size=10)
+        x = 64
+        y = height - 646 - 18
+
+        for name in [company, 'Goliath Obe Tabuni', 'Rueb Vincent']:
+            draw_name_tag(
+                pdf, name, x, y,
+                padding_x=10, padding_y=6,
+                fill_color=colors.white,
+                text_color=colors.HexColor("#8B6636"),
+                corner_radius=5,
+                font_name="Inter", font_size=10
+            )
+            text_width = pdfmetrics.stringWidth(name, "Inter", 10)
+            x += text_width + 2 * 10 + 10  # tag width + spacing
 
     draw_shrinking_text(pdf, title_text, 400, 64, height-690-15, font_name='Inter-Bold', initial_font_size=20, min_font_size=5, color=colors.white)
 
