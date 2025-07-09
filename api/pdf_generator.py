@@ -442,7 +442,6 @@ def generate_company_page(pdf, wikibase_id, height, used_name, summary):
             if img_resp.status_code == 200:
                 content_type = img_resp.headers.get('Content-Type', '')
                 image_content = img_resp.content
-                final_image_bytes = None
                 # Convert SVG to PNG if necessary
                 if 'svg' in content_type or logo.lower().endswith('.svg'):
                     png_bytes = cairosvg.svg2png(bytestring=image_content)
@@ -466,6 +465,22 @@ def generate_company_page(pdf, wikibase_id, height, used_name, summary):
 
         except Exception as e:
             print(f"The image cannot be loaded: {e}")
+    else:
+        # Draw periwatch logo if company logo isn't available
+        img_path = os.path.join(ASSET_PATH, 'periwatch.png')
+        if os.path.exists(img_path):
+            image = ImageReader(img_path)
+            img_for_size = Image.open(img_path)
+            original_width, original_height = img_for_size.size
+            max_width = 90
+            max_height = 90
+            ratio = min(max_width / original_width, max_height / original_height)
+            new_width = original_width * ratio
+            new_height = original_height * ratio
+            x_pos = 105 + (max_width - new_width) / 2
+            y_pos = (height - 242 - 54) + (max_height - new_height) / 2
+
+            pdf.drawImage(image, x_pos, y_pos, new_width, new_height, mask="auto")
 
     # Website
     draw_shrinking_text(pdf, website if website != '-' else '', 117, 251, height-217-12, font_name='Inter-Bold', initial_font_size=10, min_font_size=5, color=colors.white)
