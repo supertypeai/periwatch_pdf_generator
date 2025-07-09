@@ -453,12 +453,12 @@ def generate_company_page(pdf, wikibase_id, height, used_name, summary):
 
                 # Calculate dimensions for the image
                 original_width, original_height = img_for_size.size
-                max_width = 120
-                max_height = 120
+                max_width = 100
+                max_height = 100
                 ratio = min(max_width / original_width, max_height / original_height)
                 new_width = original_width * ratio
                 new_height = original_height * ratio
-                x_pos = 90 + (max_width - new_width) / 2
+                x_pos = 100 + (max_width - new_width) / 2
                 y_pos = (height - 248 - 54) + (max_height - new_height) / 2
 
                 pdf.drawImage(image, x_pos, y_pos, new_width, new_height, mask="auto")
