@@ -362,7 +362,7 @@ def smart_query(query):
     
     # Delete unwanted prefixes
     clean_words = [word for word in words if word not in delete_text]
-    clean_query = ' '.join(clean_words)
+    clean_query = ' '.join(clean_words).replace("-", " ")
 
     to_be_corrected = clean_query.split()
     miss_spelled = spell.unknown(to_be_corrected)
