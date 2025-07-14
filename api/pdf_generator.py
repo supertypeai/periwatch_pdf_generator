@@ -197,7 +197,7 @@ def generate_ticker_page(pdf, ticker, height):
     key = os.environ.get("SUPABASE_KEY")
     supabase = create_client(url, key)
 
-    ticker_profile = supabase.table("idx_active_company_profile").select("*").eq('symbol',ticker).execute()
+    ticker_profile = supabase.table("idx_active_company_profile").select("*").eq('symbol', ticker).execute()
 
     with open(os.path.join(ASSET_PATH,'companiesDesc.json'), 'r') as file:
         data = json.load(file)
@@ -534,6 +534,8 @@ def generate_pdf(title_text, email_text, ticker, company):
             cover_text_generator(pdf, height, ticker, email_text, title_text, used_name)
         else:
             cover_text_generator(pdf, height, ticker, email_text, title_text, '')
+    else:
+        cover_text_generator(pdf, height, ticker, email_text, title_text, '')
     pdf.showPage()
 
     # Ticker page
