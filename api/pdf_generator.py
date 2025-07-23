@@ -95,7 +95,7 @@ def cover_text_generator(pdf, height, ticker, email_text, title_text, company):
         x = 64
         y = height - 646 - 18
 
-        for name in [ticker, company, 'Goliath Obe Tabuni', 'Rueb Vincent']:
+        for name in [ticker[:4}, company, 'Goliath Obe Tabuni', 'Rueb Vincent']:
             draw_name_tag(
                 pdf, name, x, y,
                 padding_x=10, padding_y=6,
