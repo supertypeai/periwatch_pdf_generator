@@ -346,6 +346,8 @@ def is_company_wikidata(wikibase_id):
         "Q163740",      # non-profit organization
         "Q1058914",     # software company
         "Q1055701",     # computer manufacturing company
+        "Q327333",      # government agency
+        "Q4774348"      # anti-corruption agency
     }
     url = f'https://www.wikidata.org/wiki/Special:EntityData/{wikibase_id}.json'
     try:
