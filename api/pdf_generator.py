@@ -106,7 +106,8 @@ def cover_text_generator(pdf, height, ticker, email_text, title_text, company):
             )
             text_width = pdfmetrics.stringWidth(name, "Inter", 10)
             x += text_width + 2 * 10 + 10  # tag width + spacing
-
+    
+    title_text = title_text.title()
     draw_shrinking_text(pdf, title_text, 400, 64, height-690-15, font_name='Inter-Bold', initial_font_size=20, min_font_size=5, color=colors.white)
 
     pdf.setFont('Inter', 20)
