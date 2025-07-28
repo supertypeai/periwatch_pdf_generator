@@ -1,3 +1,4 @@
+import re
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -10,19 +11,18 @@ from supabase import create_client
 from datetime import datetime
 from reportlab.lib.utils import ImageReader
 import requests
-import wikipediaapi
-import wptools
 import re
-import requests
-from spellchecker import SpellChecker
-import cairosvg
 from PIL import Image
-import unicodedata
+from google import genai
+from tavily import TavilyClient
+import cairosvg
 
 load_dotenv()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSET_PATH = os.path.join(BASE_DIR, "asset")
+tavily = TavilyClient(api_key=os.getenv('TAVILY_API_KEY'))
+client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
 
 def hex_to_rgb(hex_color):
     hex_color = hex_color.lstrip('#')
@@ -247,224 +247,130 @@ def generate_ticker_page(pdf, ticker, height):
 
     pdf.setFont('Inter-Bold', 10)
     pdf.drawString(64, height-725-12, "Commissioner")
-    draw_justified_text(pdf, ', '.join(f"{s['name']} ({s['position']})" for s in ticker_profile.data[0]['comissioners']), 191, height-725-12, 348, 45, font_name="Inter", initial_font_size=10, min_font_size=5, line_spacing=2)
+    draw_justified_text(pdf, ', '.join(f"{s['name']} ({s['position']})" for s in ticker_profile.data[0]['commissioners']), 191, height-725-12, 348, 45, font_name="Inter", initial_font_size=10, min_font_size=5, line_spacing=2)
 
-def clean_wiki_value(value):
-    if not value or value == '-':
-        return '-'
-    url_match = re.match(r'\{\{URL\|(.*?)\}\}', value)
-    if url_match:
-        return url_match.group(1)
-    value = re.sub(r'\[\[(.*?)\]\]', lambda m: m.group(1).split('|')[-1], value)
-    value = re.sub(r'\{\{.*?\}\}', '', value)
-    value = value.replace('[', '').replace(']', '').replace('|', ',')
-    return value.strip()
-
-def get_wikidata_label(qid, lang='en'):
-    if not qid or not isinstance(qid, str) or not qid.startswith('Q'):
-        return qid
-    url = f'https://www.wikidata.org/wiki/Special:EntityData/{qid}.json'
-    try:
-        resp = requests.get(url)
-        data = resp.json()
-        entity = data['entities'][qid]
-        return entity['labels'][lang]['value']
-    except Exception:
-        return qid
-
-def get_wikidata_info(wikibase_id):
-    url = f'https://www.wikidata.org/wiki/Special:EntityData/{wikibase_id}.json'
-    resp = requests.get(url)
-    data = resp.json()
-    entity = data['entities'][wikibase_id]
-    claims = entity['claims']
-
-    def get_value(prop, resolve_label=False):
-        if prop in claims:
-            mainsnak = claims[prop][0]['mainsnak']
-            datavalue = mainsnak.get('datavalue', {})
-            value = datavalue.get('value')
-            if isinstance(value, dict):
-                if 'text' in value:
-                    return value['text']
-                elif 'id' in value and resolve_label:
-                    return get_wikidata_label(value['id'])
-                elif 'time' in value:
-                    date_str = value['time']
-                    return date_str[1:11]
-            elif isinstance(value, str):
-                return value
-        return '-'
-
-    website = get_value('P856')
-    industry = get_value('P452', resolve_label=True)
-    official_name = get_value('P1448')
-    logo = get_value('P154')
-    address = get_value('P6375')
-    inception = get_value('P571', resolve_label=True)
-    if not address or address == '-':
-        address = get_value('P159', resolve_label=True)
-
-    return {'website': website, 'industry': industry, 'official_name': official_name, 'logo': logo, 'address': address, 'inception': inception}
-
-def wikipedia_search_suggest_list(query, limit=5):
-    """Returns a list of Wikipedia search suggestions."""
-    url = 'https://en.wikipedia.org/w/api.php'
-    params = {
-        'action': 'opensearch',
-        'search': query,
-        'limit': limit,
-        'namespace': 0,
-        'format': 'json'
-    }
-    try:
-        resp = requests.get(url, params=params)
-        resp.raise_for_status()  # Raise an exception for bad status codes
-        data = resp.json()
-        if data and len(data) > 1 and data[1]:
-            # Return the whole list of suggestions
-            return data[1]
-    except Exception as e:
-        print(f"API request failed: {e}")
-    # Return an empty list if anything goes wrong
-    return []
-
-def is_company_wikidata(wikibase_id):
-    """Return True if the Wikidata entity is a company/organization."""
-    company_qids = {
-        "Q783794",      # enterprise
-        "Q43229",       # state-owned enterprise (BUMN)
-        "Q6881511",     # corporation
-        "Q167037",      # public company
-        "Q4830453",     # business
-        "Q891723",      # subsidiary
-        "Q1370346",     # private company
-        "Q2221906",     # holding company
-        "Q15911313",    # limited liability company
-        "Q161604",      # cooperative
-        "Q1921501",     # sole proprietorship (usaha perorangan)
-        "Q159433",      # partnership
-        "Q163740",      # non-profit organization
-        "Q1058914",     # software company
-        "Q1055701",     # computer manufacturing company
-        "Q327333",      # government agency
-        "Q4774348"      # anti-corruption agency
-    }
-    url = f'https://www.wikidata.org/wiki/Special:EntityData/{wikibase_id}.json'
-    try:
-        resp = requests.get(url)
-        data = resp.json()
-        entity = data['entities'][wikibase_id]
-        claims = entity.get('claims', {})
-        if 'P31' in claims:
-            for claim in claims['P31']:
-                mainsnak = claim.get('mainsnak', {})
-                datavalue = mainsnak.get('datavalue', {})
-                value = datavalue.get('value', {})
-                if isinstance(value, dict) and value.get('id') in company_qids:
-                    print(f"Wikidata entity {wikibase_id} is a company.")
-                    return True
-            print(f"Wikidata entity {wikibase_id} is not a company.")
-        return False
-    except Exception:
-        return False
+def get_company_info_with_tavily(company_name, model='gemini-2.5-flash'):
+    # First, search for company information using Tavily
+    search_results = tavily.search(
+        query=f"{company_name} Indonesia company or organization information (the name maybe is an abreviation, SEARCH INTENSIVELY IN INDONESIA FIRST. If not found in Indonesia, search in Southeast Asia, then globally. Images that you generate will be a logo, not something else. If it isn't logo, don't include it on the result)",
+        search_depth="advanced",
+        include_images=True,
+        include_image_descriptions=True,
+        topic="general",
+        include_domains=["linkedin.com", "crunchbase.com", "bloomberg.com", "reuters.com", "idnfinancials.com"],
+        max_results=7,
+        country="indonesia"
+    )
+    print("DEBUG: tavily finished")
+    # Extract search context from Tavily results
+    context = ""
+    for img in search_results.get('images', []):
+        context += f"Image URL: {img.get('url')}\n"
+        context += f"Image Description: {img.get('description')}\n\n"
+    for result in search_results.get('results', []):
+        context += f"Source: {result.get('url')}\n"
+        context += f"Content: {result.get('content')}\n\n"
     
-def smart_query(query):
+    # Feed the context to the LLM
+    prompt = f"""
+    Based on the following information about "{company_name}":
+    
+    {context}
+    
+    Provide detailed factual information about the company in JSON format.
+    If the information about "{company_name}" contains multiple companies or organizations, focus on the one that is most relevant to Indonesia, if not then Southeast Asia.
+    
+    Include the following fields exactly as listed:
+    {{
+        "company_name": "Official company name (do not exceed 40 characters because this will be used as a title)",
+        "summary": "A comprehensive 2 paragraph (a paragraph contains minimum 4 sentences) summary about description of the company, its business model, key products/services, market position, interesting facts, and so on. MAXIMUM 1300 characters, MINIMUM 900 characters.",
+        "logo": "Image logo URL that is the most suitable by the description, only choose one URL. Do not choose the logo that not match the summary and company name",
+        "website": "Official website URL (should be available and valid, if you cannot find a website, look at the linkedin or crunchbase profile, it usually has a link to the official website)",
+        "address": "Headquarters address (if it doesn't available, you can extract 'city, country' from summary if there's any)",
+        "industry": "Primary industry classification (you can extract this too from the summary if there's no industry data available, but don't imagine things)",
+        "sector": "Sector the company operates in (bigger picture than industry, you can extract this too)",
+        "inception": "Founding date in YYYY-MM-DD format, if month and day are not available, use only the year (YYYY)",
+        "primary_product_service": {{
+            "product": "Key product offered by the company (if applicable, otherwise null)",
+            "service": "Key service offered by the company (if applicable, otherwise null)"
+        }},
+        "main_target_market": "Description of the main target market or customer base",
+        "email": "Official contact email address (show this field only if this data is available)",
+        "social_media": {{
+            "linkedin": "LinkedIn profile username",
+            "x": "X (formerly Twitter) handle"
+        }},
+        "phone": "Official contact phone number (show this field only if this data is available and only if there's a null value for the website, address, industry, or inception fields)",
+        "ceo_or_key_person": "Name of the CEO or key person in the company (show this field only if this data is available)",
+        "interesting_facts": ["create 2-3 interesting facts about the company or organization as a list of strings"],
+        "is_company": true/false
+    }}
+
+    Only return valid JSON without any explanations or formatting around it.
+    If you're unsure about specific information, use null for that field rather than guessing.
+    If this doesn't appear to be a company or organization, set is_company to false.
     """
-    Enhanced function to clean and correct a query before searching Wikipedia.
+    response = client.models.generate_content(model=model, contents=prompt)
+    print("DEBUG: gemini finished")
+    return response.text
+
+def extract_company_info(response_text):
     """
-    if not query or not isinstance(query, str):
-        return None
-    spell = SpellChecker(language='en')
-    delete_text = ['pt', 'cv', 'tbk', 'persero', 'inc', 'corp', 'ltd']
-    words = query.lower().split()
-    
-    # Delete unwanted prefixes
-    clean_words = [word for word in words if word not in delete_text]
-    clean_query = ' '.join(clean_words).replace("-", " ")
-
-    to_be_corrected = clean_query.split()
-    miss_spelled = spell.unknown(to_be_corrected)
-    
-    # Correct spelling errors
-    final_words = []
-    for word in to_be_corrected:
-        if word in miss_spelled:
-            correction = spell.correction(word)
-            final_words.append(correction if correction is not None else word)
-        else:
-            final_words.append(word)
-            
-    query_final = ' '.join(final_words)
-    
-    print(f"Input asli: '{query}' -> Query setelah dibersihkan & dikoreksi: '{query_final}'")
-    return query_final
-
-def find_company_page(company_name):
+    Extract JSON from the response text.
     """
-    Searches for a company on Wikipedia and returns its validated Wikidata ID,
-    page title, and summary. It ensures the found page corresponds to a company entity.
-    """
-    cleaned_name = smart_query(company_name) or company_name
-    
-    # Create a list of queries to try, from most to least specific
-    search_queries = [
-        company_name,
-        cleaned_name,
-        f"{cleaned_name} (company)",
-        f"{cleaned_name} Corporation"
-    ]
+    match = re.search(r"```json\s*(\{.*?\})\s*```", response_text, re.DOTALL)
+    if match:
+        json_str = match.group(1)
+    else:
+        match = re.search(r"(\{.*\})", response_text, re.DOTALL)
+        json_str = match.group(1) if match else None
 
-    checked_pages = set()
+    if json_str:
+        try:
+            return json.loads(json_str)
+        except Exception as e:
+            print(f"JSON parse error: {e}")
+            return {}
+    print("DEBUG: json finished")
+    return {}
 
-    for query in search_queries:
-        suggestions = wikipedia_search_suggest_list(query)
-        for suggestion in suggestions:
-            if suggestion in checked_pages:
-                continue
-            checked_pages.add(suggestion)
+def safe_get(json, key, default='-'):
+    value = json.get(key, default)
+    if value is None:
+        return default
+    return value
 
-            print(f"Validating suggestion: '{suggestion}'...")
-            try:
-                # Use wptools to get the wikibase_id
-                page = wptools.page(suggestion, lang='en', silent=True)
-                page.get_parse()
-                wikibase_id = page.data.get('wikibase')
-
-                if wikibase_id:
-                    # Validate if the wikidata entity is a company
-                    if is_company_wikidata(wikibase_id):
-                        # Use wikipedia-api to get a clean summary
-                        wiki_api = wikipediaapi.Wikipedia(user_agent="Periwatch/1.0", language='en')
-                        page_py = wiki_api.page(suggestion)
-                        
-                        if page_py.exists():
-                            return wikibase_id, suggestion, page_py.summary
-            except Exception:
-                # Ignore errors from suggestions that don't lead to a valid page
-                continue
-    
-    return None, company_name, ""
-
-def generate_company_page(pdf, wikibase_id, height, used_name, summary):
+def generate_company_page(pdf, height, json):
+    print(json)
     pdf.drawImage(os.path.join(ASSET_PATH, 'company.png'), 0, 0, 595, 842)
     
-    wikidata = get_wikidata_info(wikibase_id) if wikibase_id else {}
-    website = wikidata.get('website', '-')
-    address = wikidata.get('address', '-')
-    industry = wikidata.get('industry', '-')
-    logo = wikidata.get('logo', None)
-    official_name = wikidata.get('official_name', '-')
-    date = wikidata.get('inception', '-')
+    company_name = safe_get(json, 'company_name')
+    logo = safe_get(json, 'logo')
+    summary = safe_get(json, 'summary')
+    summary_len = len(summary) if summary else 0
+    print("DEBUG: summary length", summary_len)
+    summary_height = (summary_len // 95 + 1) * 13 + 20
+    print("DEBUG: summary height", summary_height)
+    website = safe_get(json, 'website')
+    address = safe_get(json, 'address')
+    industry = safe_get(json, 'industry')
+    website = safe_get(json, 'website')
+    sector = safe_get(json, 'sector')
+    date = safe_get(json, 'inception')
+    email = safe_get(json, 'email')
+    social_media = safe_get(json, 'social_media', {})
+    phone = safe_get(json, 'phone')
+    ceo_or_key_person = safe_get(json, 'ceo_or_key_person')
+    interesting_facts = safe_get(json, 'interesting_facts', {})
+    primary_product_service = safe_get(json, 'primary_product_service', {})
+    main_target_market = safe_get(json, 'main_target_market')
+    print("DEBUG: get all data finished")
 
-    if contains_non_ascii(official_name) or official_name == '-':
-        draw_shrinking_text(pdf, used_name, 500, 51, 725, font_name='Inter-Bold', initial_font_size=30, min_font_size=5, color=colors.white)
-    else:
-        draw_shrinking_text(pdf, official_name, 500, 51, 725, font_name='Inter-Bold', initial_font_size=30, min_font_size=5, color=colors.white)
+    draw_shrinking_text(pdf, company_name, 500, 51, 725, font_name='Inter-Bold', initial_font_size=30, min_font_size=5, color=colors.white)
 
     # Draw logo if available
     if logo and logo != '-':
-        image_url = f'https://commons.wikimedia.org/wiki/Special:FilePath/{logo.replace(" ", "_")}'
+        image_url = logo
 
         try:
             headers = {'User-Agent': 'CompanyReportGenerator/1.0 (contact@example.com)'}
@@ -514,27 +420,104 @@ def generate_company_page(pdf, wikibase_id, height, used_name, summary):
             pdf.drawImage(image, x_pos, y_pos, new_width, new_height, mask="auto")
 
     # Website
-    draw_shrinking_text(pdf, website if website != '-' else '', 117, 251, height-217-12, font_name='Inter-Bold', initial_font_size=10, min_font_size=5, color=colors.white)
+    if website != 'None' and website != '-':
+        draw_shrinking_text(pdf, 'WEBSITE', 117, 251, height-200-12+2, font_name='Inter', initial_font_size=10, min_font_size=5, color=colors.white)
+        draw_shrinking_text(pdf, website, 117, 251, height-217-12+2, font_name='Inter-Bold', initial_font_size=10, min_font_size=5, color=colors.white)
+    else:
+        social_text = '-'
+        if isinstance(social_media, dict):
+            if social_media.get('linkedin'):
+                social_text = f"{social_media['linkedin']}"
+                draw_shrinking_text(pdf, 'LINKEDIN', 117, 251, height-200-12+2, font_name='Inter', initial_font_size=10, min_font_size=5, color=colors.white)
+            elif social_media.get('x'):
+                social_text = f"{social_media['x']}"
+                draw_shrinking_text(pdf, 'X', 117, 251, height-200-12+2, font_name='Inter', initial_font_size=10, min_font_size=5, color=colors.white)
+        draw_shrinking_text(pdf, social_text, 117, 251, height-217-12+2, font_name='Inter-Bold', initial_font_size=10, min_font_size=5, color=colors.white)
 
     # Address
-    draw_justified_text(pdf, address if address != '-' else '', 251, height-286-12, 147, 36, font_name="Inter-Bold", initial_font_size=10, min_font_size=5, line_spacing=2)
+    draw_justified_text(pdf, 'ADDRESS', 251, height-269-12+2, 147, 36, font_name="Inter", initial_font_size=10, min_font_size=5, line_spacing=2)
+    draw_justified_text(pdf, address.title(), 251, height-286-12+2, 147, 30, font_name="Inter-Bold", initial_font_size=10, min_font_size=5, line_spacing=2)
 
     # Industry
-    draw_shrinking_text(pdf, industry.title() if industry != '-' else '', 117, 401, height-217-12, font_name='Inter-Bold', initial_font_size=10, min_font_size=5, color=colors.white)
+    if industry and industry != '-':
+        draw_shrinking_text(pdf, 'INDUSTRY', 117, 401, height-200-12+2, font_name='Inter', initial_font_size=10, min_font_size=5, color=colors.white)
+        draw_justified_text(pdf, industry.title(), 401, height-217-12+2, 117, 30, font_name="Inter-Bold", initial_font_size=10, min_font_size=5, line_spacing=2)
+    else:
+        draw_shrinking_text(pdf, 'SECTOR', 117, 401, height-200-12+2, font_name='Inter', initial_font_size=10, min_font_size=5, color=colors.white)
+        draw_justified_text(pdf, sector.title(), 401, height-217-12+2, 117, 30, font_name="Inter-Bold", initial_font_size=10, min_font_size=5, line_spacing=2)
 
-    # Listing date (inception)
+    # Inception Date, with fallback
     if date and date != '-':
         try:
             dt = datetime.strptime(date, '%Y-%m-%d')
             date_str = dt.strftime('%d %B %Y').title()
         except Exception:
             date_str = date
-        pdf.drawString(401, height-286-12, date_str)
-    else:
-        pdf.drawString(401, height-286-12, "")
-
+        draw_shrinking_text(pdf, 'ESTABLISHED', 117, 401, height-269-12+2, font_name='Inter', initial_font_size=10, min_font_size=5, color=colors.white)
+        pdf.drawString(401, height-286-12+2, date_str)
+    elif ceo_or_key_person and ceo_or_key_person != '-':
+        draw_shrinking_text(pdf, 'KEY PERSON', 117, 401, height-269-12+2, font_name='Inter', initial_font_size=10, min_font_size=5, color=colors.white)
+        draw_shrinking_text(pdf, ceo_or_key_person, 117, 401, height-286-12+2, font_name='Inter-Bold', initial_font_size=10, min_font_size=5, color=colors.white)
+    elif primary_product_service and isinstance(primary_product_service, dict):
+        product = primary_product_service.get('product')
+        service = primary_product_service.get('service')
+        if product and product != '-':
+            draw_shrinking_text(pdf, 'PRIMARY PRODUCT', 117, 401, height-269-12+2, font_name='Inter', initial_font_size=10, min_font_size=10, color=colors.white)
+            draw_justified_text(pdf, product, 401, height-286-12+2, 117, 30, font_name="Inter-Bold", initial_font_size=10, min_font_size=5, line_spacing=2)
+        elif service and service != '-':
+            draw_shrinking_text(pdf, 'PRIMARY SERVICE', 117, 401, height-269-12+2, font_name='Inter', initial_font_size=10, min_font_size=10, color=colors.white)
+            draw_justified_text(pdf, service, 401, height-286-12+2, 117, 30, font_name="Inter-Bold", initial_font_size=10, min_font_size=5, line_spacing=2)
+    elif main_target_market and main_target_market != '-':
+        draw_shrinking_text(pdf, 'TARGET MARKET', 117, 401, height-269-12+2, font_name='Inter', initial_font_size=10, min_font_size=5, color=colors.white)
+        draw_justified_text(pdf, main_target_market, 401, height-286-12+2, 117, 30, font_name="Inter-Bold", initial_font_size=10, min_font_size=5, line_spacing=2)
+    
     # Company brief description
-    draw_justified_text(pdf, summary, 64, height-396-12, 464, 140, font_name="Inter", initial_font_size=14, min_font_size=10, line_spacing=2)
+    draw_justified_text(pdf, summary, 64, height-391-12, 464, 140, font_name="Inter", initial_font_size=14, min_font_size=10, line_spacing=2)
+
+    # Company Interesting Facts
+    if interesting_facts and isinstance(interesting_facts, list):
+        pdf.setFont('Inter-Bold', 14)
+        pdf.drawString(64, height-391-12 - summary_height, "Company Interesting Facts")
+        
+        y_position = height - 411 - 12 - summary_height
+        
+        facts = interesting_facts
+
+        for fact in facts:
+            if not fact:
+                continue
+            
+            # Add bullet point
+            bullet_point = "•"
+            
+            # Set font for bullet point and text
+            pdf.setFont("Inter", 10)
+            
+            # Calculate text width to wrap it
+            max_width = 464
+            lines = []
+            words = fact.split()
+            current_line = ""
+            
+            for word in words:
+                test_line = f"{current_line} {word}".strip()
+                if pdf.stringWidth(test_line, "Inter", 10) <= max_width:
+                    current_line = test_line
+                else:
+                    lines.append(current_line)
+                    current_line = word
+            lines.append(current_line)
+            
+            # Draw the lines
+            for i, line in enumerate(lines):
+                if i == 0:
+                    pdf.drawString(64, y_position, bullet_point)
+                    pdf.drawString(74, y_position, line)
+                else:
+                    pdf.drawString(74, y_position, line)
+                y_position -= 12  # Move to the next line
+            
+            y_position -= 6 # Add extra space between facts
 
 def generate_pdf(title_text, email_text, ticker, company):
     buffer = BytesIO()
@@ -548,11 +531,7 @@ def generate_pdf(title_text, email_text, ticker, company):
     pdf.drawImage(os.path.join(ASSET_PATH,'cover.png'), 0, 0, width, height)
     
     if company != '':
-        wikibase_id, used_name, summary = find_company_page(company)
-        if wikibase_id:
-            cover_text_generator(pdf, height, ticker, email_text, title_text, used_name)
-        else:
-            cover_text_generator(pdf, height, ticker, email_text, title_text, '')
+        cover_text_generator(pdf, height, ticker, email_text, title_text, company)
     else:
         cover_text_generator(pdf, height, ticker, email_text, title_text, '')
     pdf.showPage()
@@ -563,8 +542,10 @@ def generate_pdf(title_text, email_text, ticker, company):
         generate_ticker_page(pdf, ticker, height)
         pdf.showPage()
 
-    if company != '' and wikibase_id:
-        generate_company_page(pdf, wikibase_id, 842, used_name, summary)
+    if company != '':
+        generate_company_page(pdf, 842, extract_company_info(get_company_info_with_tavily(company)))
+        # json_dummy = {'company_name': 'Supertype', 'summary': "Supertype is a full-cycle data science consultancy and analytics development firm primarily serving Indonesia's leading companies. The firm offers end-to-end analytics solutions, spanning from initial data collection processes to complex, large-scale machine learning deployments. Their expertise lies in transforming raw data into actionable insights, enabling organizations to make informed, data-driven decisions. This comprehensive approach positions Supertype as a crucial partner for businesses seeking to leverage their data assets effectively.\n\nThe company's service offerings are centered around enterprise analytics, provided by a specialized team of analytics developers, data engineers, and infrastructure specialists. This team is dedicated to helping clients build robust data-driven infrastructures and cultures. Supertype has established a strong reputation, working with prominent Indonesian entities such as the Indonesia Stock Exchange (IDX), the Central Bank of Indonesia, Adaro Mining, and Toyota Astra. Operating from Jakarta, Indonesia, the firm employs between 11 and 50 professionals, cementing its position as a key player in the regional data and analytics landscape.", 'logo': 'https://media.licdn.com/dms/image/C560BAQGKZOWjqyxIqQ/company-logo_200_200/0/1595476689522?e=2159024400&v=beta&t=9u2NAH0-pJI41JK6RT9OwZ5cAvARJ7mvWqpr-tnTqxA', 'website': 'https://www.supertype.ai/', 'address': 'Jakarta, Indonesia', 'industry': 'Data Science Consultancy', 'sector': 'Information Technology', 'inception': None, 'social_media': {'linkedin': 'supertype-ai', 'x': None}, 'ceo_or_key_person': None, 'interesting_facts': ['Specializes in end-to-end analytics solutions, from data collection to large-scale machine learning deployments.', "Trusted by Indonesia's leading companies, including the Indonesia Stock Exchange (IDX) and the Central Bank of Indonesia.", 'Helps organizations build robust data-driven infrastructures and cultures.'], 'is_company': True}
+        # generate_company_page(pdf, 842, json_dummy)
         pdf.showPage()
 
     # Page 1
@@ -582,16 +563,3 @@ def generate_pdf(title_text, email_text, ticker, company):
     pdf.save()
     buffer.seek(0)
     return buffer
-
-def contains_non_ascii(text):
-    for char in text:
-        code = ord(char)
-        if (0x4E00 <= code <= 0x9FFF) or \
-            (0xAC00 <= code <= 0xD7A3) or \
-            (0x3040 <= code <= 0x309F) or \
-            (0x30A0 <= code <= 0x30FF):
-            return True
-        category = unicodedata.category(char)
-        if category.startswith('C'):
-            return True
-    return False
