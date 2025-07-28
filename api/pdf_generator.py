@@ -22,6 +22,7 @@ load_dotenv()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSET_PATH = os.path.join(BASE_DIR, "asset")
 tavily = TavilyClient(api_key=os.getenv('TAVILY_API_KEY'))
+tavily1 = TavilyClient(api_key=os.getenv('TAVILY_API_KEY1'))
 client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
 
 def hex_to_rgb(hex_color):
@@ -145,6 +146,111 @@ def draw_shrinking_text(pdf, text, max_width, x, y, font_name='Inter-Bold', init
     pdf.setFillColor(color)
     pdf.drawString(x, y, text)
 
+def draw_hyperlink_text(pdf, text, url, max_width, x, y, font_name='Inter-Bold', initial_font_size=30, min_font_size=5, color=colors.white):
+    """
+    Draws text as a hyperlink at (x, y) with shrinking font size if max_width is exceeded.
+
+    Parameters:
+    - pdf: ReportLab canvas object
+    - text: The string to draw
+    - url: The URL to link to
+    - max_width: Maximum allowed width for the text
+    - x, y: Coordinates to draw the text
+    - font_name: Font to use (default: 'Inter-Bold')
+    - initial_font_size: Starting font size (default: 30)
+    - min_font_size: Minimum font size allowed (default: 5)
+    - color: Text color (default: white)
+    """
+    font_size = initial_font_size
+    pdf.setFont(font_name, font_size)
+    text_width = pdf.stringWidth(text, font_name, font_size)
+
+    while text_width > max_width and font_size > min_font_size:
+        font_size -= 1
+        pdf.setFont(font_name, font_size)
+        text_width = pdf.stringWidth(text, font_name, font_size)
+
+    # Draw the text
+    pdf.setFillColor(color)
+    pdf.drawString(x, y, text)
+    
+    # Calculate the actual text width for the link area
+    actual_text_width = pdf.stringWidth(text, font_name, font_size)
+    pdf.linkURL(url, (x, y, x + actual_text_width, y + font_size))
+
+def draw_justified_hyperlink_text(c, text, url, x, y, max_width, max_height, font_name="Inter-Bold", initial_font_size=10, min_font_size=5, line_spacing=2):
+    """
+    Draws justified hyperlink text within a max width and max height at position (x, y), shrinking font size if needed.
+    This function creates clickable links for justified text.
+
+    Parameters:
+    - c: ReportLab canvas object
+    - text: The text to draw
+    - url: The URL to link to
+    - x, y: Starting coordinates
+    - max_width: Maximum allowed width for text lines
+    - max_height: Maximum allowed height for all lines combined
+    - font_name: Font to use
+    - initial_font_size: Starting font size
+    - min_font_size: Minimum font size allowed
+    - line_spacing: Additional space between lines
+    """
+    font_size = initial_font_size
+
+    while font_size >= min_font_size:
+        c.setFont(font_name, font_size)
+        words = text.split()
+        line = ""
+        lines = []
+
+        # Split text into lines based on max_width
+        for word in words:
+            test_line = f"{line} {word}".strip()
+            if c.stringWidth(test_line, font_name, font_size) <= max_width:
+                line = test_line
+            else:
+                lines.append(line)
+                line = word
+        if line:
+            lines.append(line)
+
+        line_height = font_size + line_spacing
+        total_height = line_height * len(lines)
+
+        # Check if total height fits within max_height
+        if total_height <= max_height:
+            break
+        else:
+            font_size -= 1  # Shrink font and try again
+
+    # Draw lines with justification and add hyperlinks
+    current_y = y
+    for i, line in enumerate(lines):
+        line_words = line.split()
+
+        if i == len(lines) - 1 or len(line_words) == 1:
+            c.drawString(x, current_y, line)
+            # Add hyperlink for the entire line
+            line_width = c.stringWidth(line, font_name, font_size)
+            c.linkURL(url, (x, current_y, x + line_width, current_y + font_size))
+        else:
+            total_word_width = sum(c.stringWidth(word, font_name, font_size) for word in line_words)
+            space_count = len(line_words) - 1
+            if space_count > 0:
+                extra_space = (max_width - total_word_width) / space_count
+            else:
+                extra_space = 0
+
+            word_x = x
+            for word in line_words:
+                c.drawString(word_x, current_y, word)
+                word_x += c.stringWidth(word, font_name, font_size) + extra_space
+            
+            # Add hyperlink for the entire justified line
+            c.linkURL(url, (x, current_y, x + max_width, current_y + font_size))
+
+        current_y -= line_height
+
 def draw_justified_text(c, text, x, y, max_width, max_height, font_name="Inter-Bold", initial_font_size=10, min_font_size=5, line_spacing=2):
     """
     Draws justified text within a max width and max height at position (x, y), shrinking font size if needed.
@@ -224,7 +330,8 @@ def generate_ticker_page(pdf, ticker, height):
     image = ImageReader(BytesIO(requests.get(f"https://storage.googleapis.com/sectorsapp/logo/{ticker[0:4]}.webp").content))
     pdf.drawImage(image, 104, height-188-54, 54, 54, mask="auto")
 
-    draw_shrinking_text(pdf, ticker_profile.data[0]['website'], 117, 251, height-217-12, font_name='Inter-Bold', initial_font_size=10, min_font_size=5, color=colors.white)
+    website_url = ticker_profile.data[0]['website']
+    draw_hyperlink_text(pdf, website_url, website_url, 117, 251, height-217-12, font_name='Inter-Bold', initial_font_size=10, min_font_size=5, color=colors.white)
 
     pdf.setFont('Inter-Bold', 10)
     pdf.drawString(401, height-217-12, ticker_profile.data[0]['phone'])
@@ -251,17 +358,16 @@ def generate_ticker_page(pdf, ticker, height):
 
 def get_company_info_with_tavily(company_name, model='gemini-2.5-flash'):
     # First, search for company information using Tavily
-    search_results = tavily.search(
-        query=f"{company_name} Indonesia company or organization information (the name maybe is an abreviation, SEARCH INTENSIVELY IN INDONESIA FIRST. If not found in Indonesia, search in Southeast Asia, then globally. Images that you generate will be a logo, not something else. If it isn't logo, don't include it on the result)",
+    search_results = tavily1.search(
+        query=f"{company_name} Indonesia company or organization information (the name maybe is an abreviation, SEARCH INTENSIVELY IN INDONESIA FIRST. If not found in Indonesia, search in Southeast Asia, then globally.",
         search_depth="advanced",
-        include_images=True,
-        include_image_descriptions=True,
+        include_answer="advanced",
         topic="general",
-        include_domains=["linkedin.com", "crunchbase.com", "bloomberg.com", "reuters.com", "idnfinancials.com"],
+        include_domains=["linkedin.com", "bloomberg.com", f"{company_name}.com", "idnfinancials.com"],
         max_results=7,
         country="indonesia"
     )
-    print("DEBUG: tavily finished")
+    print("DEBUG: search_results", search_results)
     # Extract search context from Tavily results
     context = ""
     for img in search_results.get('images', []):
@@ -284,9 +390,8 @@ def get_company_info_with_tavily(company_name, model='gemini-2.5-flash'):
     {{
         "company_name": "Official company name (do not exceed 40 characters because this will be used as a title)",
         "summary": "A comprehensive 2 paragraph (a paragraph contains minimum 4 sentences) summary about description of the company, its business model, key products/services, market position, interesting facts, and so on. MAXIMUM 1300 characters, MINIMUM 900 characters.",
-        "logo": "Image logo URL that is the most suitable by the description, only choose one URL. Do not choose the logo that not match the summary and company name",
         "website": "Official website URL (should be available and valid, if you cannot find a website, look at the linkedin or crunchbase profile, it usually has a link to the official website)",
-        "address": "Headquarters address (if it doesn't available, you can extract 'city, country' from summary if there's any)",
+        "address": "Headquarters address (if it doesn't available, you can extract 'city, country' or 'country' from summary if there's any)",
         "industry": "Primary industry classification (you can extract this too from the summary if there's no industry data available, but don't imagine things)",
         "sector": "Sector the company operates in (bigger picture than industry, you can extract this too)",
         "inception": "Founding date in YYYY-MM-DD format, if month and day are not available, use only the year (YYYY)",
@@ -295,21 +400,24 @@ def get_company_info_with_tavily(company_name, model='gemini-2.5-flash'):
             "service": "Key service offered by the company (if applicable, otherwise null)"
         }},
         "main_target_market": "Description of the main target market or customer base",
-        "email": "Official contact email address (show this field only if this data is available)",
         "social_media": {{
             "linkedin": "LinkedIn profile username",
             "x": "X (formerly Twitter) handle"
         }},
-        "phone": "Official contact phone number (show this field only if this data is available and only if there's a null value for the website, address, industry, or inception fields)",
         "ceo_or_key_person": "Name of the CEO or key person in the company (show this field only if this data is available)",
         "interesting_facts": ["create 2-3 interesting facts about the company or organization as a list of strings"],
-        "is_company": true/false
+        "is_company": true/false,
+        "sources": [
+            "List of URLs (max 5) where this information was obtained"
+        ]
     }}
 
     Only return valid JSON without any explanations or formatting around it.
     If you're unsure about specific information, use null for that field rather than guessing.
     If this doesn't appear to be a company or organization, set is_company to false.
     """
+        # "email": "Official contact email address (show this field only if this data is available)",
+        # "phone": "Official contact phone number (show this field only if this data is available and only if there's a null value for the website, address, industry, or inception fields)",
     response = client.models.generate_content(model=model, contents=prompt)
     print("DEBUG: gemini finished")
     return response.text
@@ -340,31 +448,58 @@ def safe_get(json, key, default='-'):
         return default
     return value
 
+def get_company_image_with_tavily(links):
+    search_results = tavily1.search(
+        query=f"From '{links}'. It's about company in Indonesia (or Southeast Asia), provide its official logo URL from the links.",
+        search_depth="advanced",
+        include_images=True,
+        include_image_descriptions=True,
+        include_domains=["linkedin.com"],
+        max_results=1,
+        country="indonesia"
+    )
+    for img in search_results.get('images', []):
+        url = img.get('url', '')
+        if 'company-logo' in url:
+            return url
+    return '-'
+
 def generate_company_page(pdf, height, json):
     print(json)
     pdf.drawImage(os.path.join(ASSET_PATH, 'company.png'), 0, 0, 595, 842)
     
     company_name = safe_get(json, 'company_name')
-    logo = safe_get(json, 'logo')
     summary = safe_get(json, 'summary')
     summary_len = len(summary) if summary else 0
-    print("DEBUG: summary length", summary_len)
     summary_height = (summary_len // 95 + 1) * 13 + 20
-    print("DEBUG: summary height", summary_height)
     website = safe_get(json, 'website')
     address = safe_get(json, 'address')
     industry = safe_get(json, 'industry')
-    website = safe_get(json, 'website')
     sector = safe_get(json, 'sector')
     date = safe_get(json, 'inception')
-    email = safe_get(json, 'email')
+    # email = safe_get(json, 'email')
     social_media = safe_get(json, 'social_media', {})
-    phone = safe_get(json, 'phone')
+    # phone = safe_get(json, 'phone')
     ceo_or_key_person = safe_get(json, 'ceo_or_key_person')
     interesting_facts = safe_get(json, 'interesting_facts', {})
     primary_product_service = safe_get(json, 'primary_product_service', {})
     main_target_market = safe_get(json, 'main_target_market')
+    sources = safe_get(json, 'sources', [])
     print("DEBUG: get all data finished")
+
+    if website != '-' or website != 'None':
+        source_links = website + ', ' + str(sources)
+    elif isinstance(social_media, dict) and social_media.get('linkedin'):
+        source_links = 'https://www.linkedin.com/company/' + str(social_media.get('linkedin')) + ', ' + str(sources)
+    source_links = source_links[:291]
+    
+    print("DEBUG: source_links", source_links)
+
+    logo = get_company_image_with_tavily(source_links)
+    print("DEBUG: logo link ", logo)
+
+    # logo = safe_get(image_resp, 'images', [{}])[0].get('url', '-')
+    # print("DEBUG: logo", logo)
 
     draw_shrinking_text(pdf, company_name, 500, 51, 725, font_name='Inter-Bold', initial_font_size=30, min_font_size=5, color=colors.white)
 
@@ -422,21 +557,28 @@ def generate_company_page(pdf, height, json):
     # Website
     if website != 'None' and website != '-':
         draw_shrinking_text(pdf, 'WEBSITE', 117, 251, height-200-12+2, font_name='Inter', initial_font_size=10, min_font_size=5, color=colors.white)
-        draw_shrinking_text(pdf, website, 117, 251, height-217-12+2, font_name='Inter-Bold', initial_font_size=10, min_font_size=5, color=colors.white)
+        draw_hyperlink_text(pdf, website, website, 117, 251, height-217-12+2, font_name='Inter-Bold', initial_font_size=10, min_font_size=5, color=colors.white)
     else:
         social_text = '-'
+        social_url = '-'
         if isinstance(social_media, dict):
             if social_media.get('linkedin'):
                 social_text = f"{social_media['linkedin']}"
+                social_url = f"https://www.linkedin.com/company/{social_media['linkedin']}"
                 draw_shrinking_text(pdf, 'LINKEDIN', 117, 251, height-200-12+2, font_name='Inter', initial_font_size=10, min_font_size=5, color=colors.white)
             elif social_media.get('x'):
                 social_text = f"{social_media['x']}"
+                social_url = f"https://twitter.com/{social_media['x']}"
                 draw_shrinking_text(pdf, 'X', 117, 251, height-200-12+2, font_name='Inter', initial_font_size=10, min_font_size=5, color=colors.white)
-        draw_shrinking_text(pdf, social_text, 117, 251, height-217-12+2, font_name='Inter-Bold', initial_font_size=10, min_font_size=5, color=colors.white)
+        
+        if social_url != '-':
+            draw_hyperlink_text(pdf, social_text, social_url, 117, 251, height-217-12+2, font_name='Inter-Bold', initial_font_size=10, min_font_size=5, color=colors.white)
+        else:
+            draw_shrinking_text(pdf, social_text, 117, 251, height-217-12+2, font_name='Inter-Bold', initial_font_size=10, min_font_size=5, color=colors.white)
 
     # Address
-    draw_justified_text(pdf, 'ADDRESS', 251, height-269-12+2, 147, 36, font_name="Inter", initial_font_size=10, min_font_size=5, line_spacing=2)
-    draw_justified_text(pdf, address.title(), 251, height-286-12+2, 147, 30, font_name="Inter-Bold", initial_font_size=10, min_font_size=5, line_spacing=2)
+    draw_justified_text(pdf, 'ADDRESS', 251, height-269-12+2, 117, 36, font_name="Inter", initial_font_size=10, min_font_size=5, line_spacing=2)
+    draw_justified_text(pdf, address.title(), 251, height-286-12+2, 117, 30, font_name="Inter-Bold", initial_font_size=10, min_font_size=5, line_spacing=2)
 
     # Industry
     if industry and industry != '-':
@@ -544,7 +686,7 @@ def generate_pdf(title_text, email_text, ticker, company):
 
     if company != '':
         generate_company_page(pdf, 842, extract_company_info(get_company_info_with_tavily(company)))
-        # json_dummy = {'company_name': 'Supertype', 'summary': "Supertype is a full-cycle data science consultancy and analytics development firm primarily serving Indonesia's leading companies. The firm offers end-to-end analytics solutions, spanning from initial data collection processes to complex, large-scale machine learning deployments. Their expertise lies in transforming raw data into actionable insights, enabling organizations to make informed, data-driven decisions. This comprehensive approach positions Supertype as a crucial partner for businesses seeking to leverage their data assets effectively.\n\nThe company's service offerings are centered around enterprise analytics, provided by a specialized team of analytics developers, data engineers, and infrastructure specialists. This team is dedicated to helping clients build robust data-driven infrastructures and cultures. Supertype has established a strong reputation, working with prominent Indonesian entities such as the Indonesia Stock Exchange (IDX), the Central Bank of Indonesia, Adaro Mining, and Toyota Astra. Operating from Jakarta, Indonesia, the firm employs between 11 and 50 professionals, cementing its position as a key player in the regional data and analytics landscape.", 'logo': 'https://media.licdn.com/dms/image/C560BAQGKZOWjqyxIqQ/company-logo_200_200/0/1595476689522?e=2159024400&v=beta&t=9u2NAH0-pJI41JK6RT9OwZ5cAvARJ7mvWqpr-tnTqxA', 'website': 'https://www.supertype.ai/', 'address': 'Jakarta, Indonesia', 'industry': 'Data Science Consultancy', 'sector': 'Information Technology', 'inception': None, 'social_media': {'linkedin': 'supertype-ai', 'x': None}, 'ceo_or_key_person': None, 'interesting_facts': ['Specializes in end-to-end analytics solutions, from data collection to large-scale machine learning deployments.', "Trusted by Indonesia's leading companies, including the Indonesia Stock Exchange (IDX) and the Central Bank of Indonesia.", 'Helps organizations build robust data-driven infrastructures and cultures.'], 'is_company': True}
+        # json_dummy = {'company_name': 'The Audit Board of Indonesia (BPK RI)', 'summary': "The Audit Board of Indonesia (BPK RI) is a prominent government administration body responsible for independently auditing state financial management and accountability. Its core mission is to implement good governance by upholding integrity, independence, and professionalism in its operations. The organization specializes in crucial areas such as audit, investigation, finance, government, and performance evaluations, playing a vital role in ensuring transparency and accountability in national financial affairs. BPK RI acts as a critical oversight mechanism for public funds.\n\nFounded in 1947, BPK RI has established itself as a cornerstone of Indonesia's financial governance, aiming to be a driving force in state financial management to achieve national goals through high-quality and value-added audits. With a significant workforce of over 10,001 employees, it is one of the largest government bodies in Indonesia, demonstrating its extensive reach and impact. The institution's commitment to its vision ensures that state financial practices are scrutinized to foster national development and uphold public trust. Its influence extends across all levels of government finance.", 'website': None, 'address': 'Jakarta Pusat, DKI Jakarta', 'industry': 'Government Administration', 'sector': 'Government', 'inception': '1947', 'primary_product_service': {'product': None, 'service': 'Audit, Investigation, Financial Oversight'}, 'main_target_market': 'Indonesian government entities and public financial management', 'social_media': {'linkedin': 'the-audit-board-of-indonesia-bpk-ri-', 'x': None}, 'ceo_or_key_person': None, 'interesting_facts': ['It is the supreme audit institution of Indonesia, responsible for auditing the financial management of the state.', 'Established in 1947, BPK RI has a long-standing history that predates the formal independence of many modern nations, highlighting its foundational role in Indonesian governance.', 'Its core values of integrity, independence, and professionalism are explicitly stated as integral to its mission, ensuring unbiased financial oversight.'], 'is_company': False, 'sources': ['https://ca.linkedin.com/company/the-audit-board-of-indonesia-bpk-ri-?trk=public_profile_experience-item_profile-section-card_subtitle-click', 'https://si.linkedin.com/company/the-audit-board-of-indonesia-bpk-ri-', 'https://za.linkedin.com/company/the-audit-board-of-indonesia-bpk-ri-?trk=similar-pages_result-card_full-click']}
         # generate_company_page(pdf, 842, json_dummy)
         pdf.showPage()
 
