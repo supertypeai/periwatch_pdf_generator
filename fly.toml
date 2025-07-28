@@ -1,0 +1,27 @@
+app = "periwatch-pdf-generator"
+
+primary_region = "sin"
+
+[build]
+# No Dockerfile, using Buildpacks or default Python setup
+
+[env]
+# You can leave this empty if env vars are managed in Fly UI
+# These are just local defaults; Fly UI values override them.
+PORT = "8080"
+
+[[services]]
+internal_port = 8080
+protocol = "tcp"
+
+  [[services.ports]]
+  port = 80
+  handlers = ["http"]
+
+  [[services.ports]]
+  port = 443
+  handlers = ["tls", "http"]
+
+  [[services.tcp_checks]]
+  interval = "15s"
+  timeout = "2s"
