@@ -3,7 +3,7 @@ app = "periwatch-pdf-generator"
 primary_region = "sin"
 
 [build]
-# No Dockerfile, using Buildpacks or default Python setup
+builder = "paketobuildpacks/builder:base"
 
 [env]
 # You can leave this empty if env vars are managed in Fly UI
