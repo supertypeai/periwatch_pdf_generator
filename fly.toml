@@ -1,9 +1,12 @@
 app = "periwatch-pdf-generator"
-
 primary_region = "sin"
+console_command = "python manage.py shell"
 
 [build]
-builder = "paketobuildpacks/builder:base"
+builder = "paketobuildpacks/builder:base"  # No Dockerfile, use Buildpacks
+
+[deploy]
+release_command = "python manage.py migrate --noinput"
 
 [env]
 # You can leave this empty if env vars are managed in Fly UI
