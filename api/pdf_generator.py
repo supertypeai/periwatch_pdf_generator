@@ -356,7 +356,7 @@ def generate_ticker_page(pdf, ticker, height):
 
     pdf.setFont('Inter-Bold', 10)
     pdf.drawString(64, height-725-12, "Commissioner")
-    draw_justified_text(pdf, ', '.join(f"{s['name']} ({s['position']})" for s in ticker_profile.data[0]['commissioners']), 191, height-725-12, 348, 45, font_name="Inter", initial_font_size=10, min_font_size=5, line_spacing=2)
+    draw_justified_text(pdf, ', '.join(f"{s['name']} ({s['position']})" for s in ticker_profile.data[0]['comissioners']), 191, height-725-12, 348, 45, font_name="Inter", initial_font_size=10, min_font_size=5, line_spacing=2)
 
 def get_company_info_with_tavily(company_name, model='gemini-2.5-flash'):
     # First, search for company information using Tavily
