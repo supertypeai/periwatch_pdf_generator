@@ -82,6 +82,7 @@ def cover_text_generator(pdf, height, ticker, email_text, title_text, company):
         x = 64
         y = height - 646 - 18
 
+        company = company.replace('-', ' ').title()
         for name in [company, 'Goliath Obe Tabuni', 'Rueb Vincent']:
             draw_name_tag(
                 pdf, name, x, y,
@@ -97,7 +98,7 @@ def cover_text_generator(pdf, height, ticker, email_text, title_text, company):
     elif ticker != '' and company != '':
         x = 64
         y = height - 646 - 18
-
+        company = company.replace('-', ' ').title()
         for name in [ticker[:4], company, 'Goliath Obe Tabuni', 'Rueb Vincent']:
             draw_name_tag(
                 pdf, name, x, y,
