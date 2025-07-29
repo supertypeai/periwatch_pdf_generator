@@ -630,7 +630,7 @@ def generate_company_page(pdf, height, json):
     # Company Interesting Facts
     if interesting_facts and isinstance(interesting_facts, list):
         pdf.setFont('Inter-Bold', 14)
-        pdf.drawString(64, height-391-12 - summary_height, "Company Interesting Facts")
+        pdf.drawString(64, height-391-12 - summary_height, "Key Information")
         
         y_position = height - 411 - 12 - summary_height
         
