@@ -15,7 +15,9 @@ import re
 from PIL import Image
 from google import genai
 from tavily import TavilyClient
-import cairosvg
+from reportlab.graphics import renderPM
+from reportlab.lib.utils import ImageReader
+from svglib.svglib import svg2rlg
 
 load_dotenv()
 
@@ -514,11 +516,20 @@ def generate_company_page(pdf, height, json):
             if img_resp.status_code == 200:
                 content_type = img_resp.headers.get('Content-Type', '')
                 image_content = img_resp.content
-                # Convert SVG to PNG if necessary
+
                 if 'svg' in content_type or logo.lower().endswith('.svg'):
-                    png_bytes = cairosvg.svg2png(bytestring=image_content)
-                    image = ImageReader(BytesIO(png_bytes))
-                    img_for_size = Image.open(BytesIO(png_bytes))
+                    # Convert SVG to ReportLab Drawing
+                    svg_io = BytesIO(image_content)
+                    drawing = svg2rlg(svg_io)
+
+                    # Render drawing to a raster (PNG) image in memory
+                    png_io = BytesIO()
+                    renderPM.drawToFile(drawing, png_io, fmt='PNG')
+                    png_io.seek(0)
+
+                    # Load PNG into reportlab and PIL
+                    image = ImageReader(png_io)
+                    img_for_size = Image.open(png_io)
                 else:
                     image = ImageReader(BytesIO(image_content))
                     img_for_size = Image.open(BytesIO(image_content))
