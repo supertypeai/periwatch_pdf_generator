@@ -58,7 +58,7 @@ soupsieve==2.7
 sqlparse==0.5.3
 storage3==0.12.0
 StrEnum==0.4.15
-supabase==2.17.0
+supabase==2.16.0
 supafunc==0.10.1
 svglib==1.5.1
 tavily-python==0.7.10
