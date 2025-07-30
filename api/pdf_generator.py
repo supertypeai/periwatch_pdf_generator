@@ -370,7 +370,7 @@ def get_company_info_with_tavily(company_name, model='gemini-2.5-flash'):
         max_results=7,
         country="indonesia"
     )
-    print("DEBUG: search_results", search_results)
+    # print("DEBUG: search_results", search_results)
     # Extract search context from Tavily results
     context = ""
     for img in search_results.get('images', []):
@@ -422,7 +422,7 @@ def get_company_info_with_tavily(company_name, model='gemini-2.5-flash'):
         # "email": "Official contact email address (show this field only if this data is available)",
         # "phone": "Official contact phone number (show this field only if this data is available and only if there's a null value for the website, address, industry, or inception fields)",
     response = client.models.generate_content(model=model, contents=prompt)
-    print("DEBUG: gemini finished")
+    # print("DEBUG: gemini finished")
     return response.text
 
 def extract_company_info(response_text):
@@ -442,7 +442,6 @@ def extract_company_info(response_text):
         except Exception as e:
             print(f"JSON parse error: {e}")
             return {}
-    print("DEBUG: json finished")
     return {}
 
 def safe_get(json, key, default='-'):
@@ -468,6 +467,7 @@ def get_company_image_with_tavily(links):
     return '-'
 
 def generate_company_page(pdf, height, json):
+    print("DEBUG: json finished")
     print(json)
     pdf.drawImage(os.path.join(ASSET_PATH, 'company.png'), 0, 0, 595, 842)
     
@@ -488,7 +488,7 @@ def generate_company_page(pdf, height, json):
     primary_product_service = safe_get(json, 'primary_product_service', {})
     main_target_market = safe_get(json, 'main_target_market')
     sources = safe_get(json, 'sources', [])
-    print("DEBUG: get all data finished")
+    # print("DEBUG: get all data finished")
 
     if website != '-' or website != 'None':
         source_links = website + ', ' + str(sources)
@@ -500,9 +500,6 @@ def generate_company_page(pdf, height, json):
 
     logo = get_company_image_with_tavily(source_links)
     print("DEBUG: logo link ", logo)
-
-    # logo = safe_get(image_resp, 'images', [{}])[0].get('url', '-')
-    # print("DEBUG: logo", logo)
 
     draw_shrinking_text(pdf, company_name, 500, 51, 725, font_name='Inter-Bold', initial_font_size=30, min_font_size=5, color=colors.white)
 
