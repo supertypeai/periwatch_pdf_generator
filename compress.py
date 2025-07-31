@@ -5,10 +5,6 @@ from PIL import Image
 import io
 
 def compress_pdf_simple(input_path, output_path, image_quality=40):
-    """
-    Simple and effective PDF compression by converting pages to compressed images.
-    This method works reliably with all PyMuPDF versions.
-    """
     print(f"Compressing PDF: {input_path}")
     
     # Open the input PDF
@@ -24,20 +20,15 @@ def compress_pdf_simple(input_path, output_path, image_quality=40):
         page = doc[page_num]
         
         print(f"Processing page {page_num + 1}/{total_pages}...")
-        
-        # Convert page to high-resolution image
-        # Use zoom factor for better quality (1.5x is good balance between quality and size)
+        # Zoom factor for better quality
         zoom = 1.9
         mat = fitz.Matrix(zoom, zoom)
         pix = page.get_pixmap(matrix=mat)
         
-        # Convert to PIL Image
         img_data = pix.tobytes("png")
         pil_image = Image.open(io.BytesIO(img_data))
-        
-        # Convert to RGB if necessary (removes alpha channel)
+
         if pil_image.mode in ('RGBA', 'LA', 'P'):
-            # Create white background
             rgb_image = Image.new('RGB', pil_image.size, (255, 255, 255))
             if pil_image.mode == 'RGBA':
                 rgb_image.paste(pil_image, mask=pil_image.split()[-1])  # Use alpha channel as mask
@@ -45,19 +36,17 @@ def compress_pdf_simple(input_path, output_path, image_quality=40):
                 rgb_image.paste(pil_image)
             pil_image = rgb_image
         
-        # Compress the image
+        # Compress image
         img_buffer = io.BytesIO()
-        pil_image.save(img_buffer, 
-                      format='JPEG', 
-                      quality=image_quality,
-                      optimize=True,
-                      progressive=True)
+        pil_image.save(img_buffer,
+                    format='JPEG',
+                    quality=image_quality,
+                    optimize=True,
+                    progressive=True)
         img_buffer.seek(0)
         
-        # Create new page with same dimensions as original
         new_page = new_doc.new_page(width=page.rect.width, height=page.rect.height)
         
-        # Insert the compressed image
         new_page.insert_image(page.rect, stream=img_buffer.read())
         
         print(f"  Original page size: {len(pix.tobytes('png')):,} bytes")
@@ -66,9 +55,9 @@ def compress_pdf_simple(input_path, output_path, image_quality=40):
     # Save the compressed PDF
     print("Saving compressed PDF...")
     new_doc.save(output_path, 
-                 garbage=4,      # Remove unused objects
-                 deflate=True,   # Compress streams  
-                 clean=True      # Clean up structure
+                garbage=4,      # Remove unused objects
+                deflate=True,   # Compress streams  
+                clean=True      # Clean up structure
     )
     
     # Close documents
@@ -92,6 +81,9 @@ def compress_pdf_simple(input_path, output_path, image_quality=40):
     print(f"{'='*50}")
 
 def compress_with_different_qualities(input_path, base_output_name):
+    """
+    Creates multiple compressed versions with different quality settings.
+    """
     qualities = [20, 30, 50, 70]
     
     for quality in qualities:
@@ -107,6 +99,4 @@ if __name__ == "__main__":
         print("Please make sure the PDF file exists in the current directory.")
         sys.exit(1)
     
-    # Single compression with medium quality
-    print("Creating compressed version with medium quality...")
     compress_pdf_simple(input_pdf, "kpk_compressed6.pdf", image_quality=90)

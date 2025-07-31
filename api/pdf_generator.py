@@ -467,8 +467,8 @@ def get_company_image_with_tavily(links):
     return '-'
 
 def generate_company_page(pdf, height, json):
-    print("DEBUG: json finished")
-    print(json)
+    # print("DEBUG: json finished")
+    # print(json)
     pdf.drawImage(os.path.join(ASSET_PATH, 'company.png'), 0, 0, 595, 842)
     
     company_name = safe_get(json, 'company_name')
@@ -496,10 +496,10 @@ def generate_company_page(pdf, height, json):
         source_links = 'https://www.linkedin.com/company/' + str(social_media.get('linkedin')) + ', ' + str(sources)
     source_links = source_links[:291]
     
-    print("DEBUG: source_links", source_links)
+    # print("DEBUG: source_links", source_links)
 
     logo = get_company_image_with_tavily(source_links)
-    print("DEBUG: logo link ", logo)
+    # print("DEBUG: logo link ", logo)
 
     draw_shrinking_text(pdf, company_name, 500, 51, 725, font_name='Inter-Bold', initial_font_size=30, min_font_size=5, color=colors.white)
 
