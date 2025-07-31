@@ -7,12 +7,102 @@ from django.conf import settings
 from .pdf_generator import generate_pdf
 import logging
 from io import BytesIO
+import fitz  # PyMuPDF for compression
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
 class PDFGenerationTask:
     def __init__(self):
         self.active_tasks = {}
+    
+    def compress_pdf_buffer(self, pdf_buffer, image_quality=90):
+        """
+        Compress PDF buffer using PyMuPDF with image quality optimization.
+        Returns compressed PDF buffer.
+        """
+        try:
+            logger.info(f"Starting PDF compression with quality {image_quality}%")
+            
+            # Read original PDF from buffer
+            pdf_buffer.seek(0)
+            original_data = pdf_buffer.read()
+            original_size = len(original_data)
+            
+            # Open PDF with PyMuPDF
+            doc = fitz.open(stream=original_data, filetype="pdf")
+            
+            # Create new document for compressed version
+            new_doc = fitz.open()
+            
+            total_pages = len(doc)
+            logger.info(f"Compressing {total_pages} pages...")
+            
+            for page_num in range(total_pages):
+                page = doc[page_num]
+                
+                # Create high-quality pixmap
+                zoom = 1.9  # Good balance between quality and size
+                mat = fitz.Matrix(zoom, zoom)
+                pix = page.get_pixmap(matrix=mat)
+                
+                # Convert to PIL Image for compression
+                img_data = pix.tobytes("png")
+                pil_image = Image.open(BytesIO(img_data))
+                
+                # Handle different image modes
+                if pil_image.mode in ('RGBA', 'LA', 'P'):
+                    rgb_image = Image.new('RGB', pil_image.size, (255, 255, 255))
+                    if pil_image.mode == 'RGBA':
+                        rgb_image.paste(pil_image, mask=pil_image.split()[-1])
+                    else:
+                        rgb_image.paste(pil_image)
+                    pil_image = rgb_image
+                
+                # Compress image
+                img_buffer = BytesIO()
+                pil_image.save(img_buffer,
+                            format='JPEG',
+                            quality=image_quality,
+                            optimize=True,
+                            progressive=True)
+                img_buffer.seek(0)
+                
+                # Create new page and insert compressed image
+                new_page = new_doc.new_page(width=page.rect.width, height=page.rect.height)
+                new_page.insert_image(page.rect, stream=img_buffer.read())
+            
+            # Save compressed PDF to buffer
+            compressed_buffer = BytesIO()
+            compressed_data = new_doc.tobytes(
+                garbage=4,      # Remove unused objects
+                deflate=True,   # Compress streams
+                clean=True      # Clean up structure
+            )
+            compressed_buffer.write(compressed_data)
+            compressed_buffer.seek(0)
+            
+            # Clean up
+            new_doc.close()
+            doc.close()
+            
+            # Log compression results
+            compressed_size = len(compressed_data)
+            compression_ratio = ((original_size - compressed_size) / original_size) * 100
+            
+            logger.info(f"PDF compression completed:")
+            logger.info(f"  Original size: {original_size:,} bytes ({original_size/1024/1024:.2f} MB)")
+            logger.info(f"  Compressed size: {compressed_size:,} bytes ({compressed_size/1024/1024:.2f} MB)")
+            logger.info(f"  Space saved: {original_size - compressed_size:,} bytes ({(original_size - compressed_size)/1024/1024:.2f} MB)")
+            logger.info(f"  Compression ratio: {compression_ratio:.1f}%")
+            
+            return compressed_buffer
+            
+        except Exception as e:
+            logger.error(f"PDF compression failed: {str(e)}")
+            logger.warning("Returning original PDF without compression")
+            pdf_buffer.seek(0)
+            return pdf_buffer
         
     def generate_pdf_with_timeout(self, task_id, title_text, email_text, ticker, company, 
                                   timeout_seconds=30, recipient_email=None):
@@ -57,10 +147,15 @@ class PDFGenerationTask:
             elapsed_time = time.time() - start_time
         
         if result_container['completed']:
-            # PDF completed within timeout
+            # PDF completed within timeout - compress before returning
             self.active_tasks[task_id]['status'] = 'completed'
-            logger.info(f"Task {task_id} completed within timeout")
-            return result_container['pdf_buffer'], 'completed'
+            logger.info(f"Task {task_id} completed within timeout, compressing PDF...")
+            
+            # Compress the completed PDF
+            compressed_pdf = self.compress_pdf_buffer(result_container['pdf_buffer'], image_quality=90)
+            
+            logger.info(f"Task {task_id} compression completed")
+            return compressed_pdf, 'completed'
             
         elif result_container['error']:
             # PDF generation failed
@@ -72,7 +167,16 @@ class PDFGenerationTask:
             # Timeout reached, return partial PDF and continue in background
             self.active_tasks[task_id]['status'] = 'processing_background'
             logger.info(f"Task {task_id} timed out, generating partial PDF and continuing in background")
+            
+            # Generate partial PDF (cover page only)
             partial_pdf = self._generate_partial_pdf(title_text, email_text, ticker, company)
+            
+            # Compress partial PDF before returning
+            if partial_pdf:
+                logger.info(f"Compressing partial PDF for task {task_id}")
+                partial_pdf = self.compress_pdf_buffer(partial_pdf, image_quality=90)
+            
+            # Continue full generation in background
             self._continue_in_background(task_id, worker_thread, result_container)
             return partial_pdf, 'partial'
     
@@ -142,11 +246,11 @@ class PDFGenerationTask:
             pdf.setFillColor(colors.HexColor("#C8A882"))
             text1 = "Processing Your Report"
             text1_width = pdf.stringWidth(text1, title_font, 36)
-            pdf.drawString((width - text1_width) / 2, height/2 + 120, text1)
+            pdf.drawString((width - text1_width) / 2, height/2 + 157, text1)
             
             # Dots
             pdf.setFillColor(colors.HexColor("#C8A882"))
-            dot_y = height/2 + 80
+            dot_y = height/2 + 117
             dot_spacing = 15
             start_x = (width - (2 * dot_spacing)) / 2
             for i in range(3):
@@ -156,7 +260,7 @@ class PDFGenerationTask:
             pdf.setFillColor(colors.HexColor("#E5E5E5"))
             text2 = "Please wait while we generate your complete report"
             text2_width = pdf.stringWidth(text2, body_font, 18)
-            pdf.drawString((width - text2_width) / 2, height/2 + 30, text2)
+            pdf.drawString((width - text2_width) / 2, height/2 + 67, text2)
             
             # Info box
             box_width = 450
@@ -173,7 +277,7 @@ class PDFGenerationTask:
             pdf.setFillColor(colors.white)
             text3 = "The complete version will be sent to your email shortly."
             text3_width = pdf.stringWidth(text3, body_font, 14)
-            pdf.drawString((width - text3_width) / 2, height/2 - 10, text3)
+            pdf.drawString((width - text3_width) / 2, height/2 - 13, text3)
             
             # Email info
             pdf.setFont(title_font, 16)
@@ -279,12 +383,17 @@ class PDFGenerationTask:
                 worker_thread.join()
                 
                 if result_container['completed'] and result_container['pdf_buffer']:
-                    # Send email with complete PDF
+                    # Compress full PDF before sending email
                     task_info = self.active_tasks.get(task_id, {})
+                    logger.info(f"Compressing full PDF for task {task_id} before email")
+                    
+                    compressed_pdf = self.compress_pdf_buffer(result_container['pdf_buffer'], image_quality=90)
+                    
+                    # Send email with compressed complete PDF
                     self._send_pdf_email(
                         task_info.get('recipient_email'),
                         task_info.get('title_text', 'Periwatch Report'),
-                        result_container['pdf_buffer']
+                        compressed_pdf
                     )
                     self.active_tasks[task_id]['status'] = 'completed_and_sent'
                     logger.info(f"Task {task_id} completed and email sent")
@@ -308,23 +417,100 @@ class PDFGenerationTask:
             logger.info(f"Attempting to send PDF email to {recipient_email}")
             
             subject = f"Your {title} Report is Ready"
+            # Get file size for email message
+            pdf_buffer.seek(0)
+            file_size_bytes = len(pdf_buffer.read())
+            file_size_mb = file_size_bytes / 1024 / 1024
+            
             message = f"""
-Hello,
-
-Your requested report "{title}" has been generated successfully.
-Please find the complete PDF report attached to this email.
-
-Report Details:
-- Title: {title}
-- Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-- File size: {pdf_buffer.getbuffer().nbytes} bytes
-
-Best regards,
-Periwatch Intelligence Team
-
----
-This email was sent automatically by Periwatch PDF Generator.
-If you have any questions, please contact support.
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Periwatch Report Ready</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Arial', 'Helvetica', sans-serif; background-color: #f4f4f4;">
+    <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+        
+        <!-- Header -->
+        <div style="background: linear-gradient(135deg, #C8A882 0%, #8B6636 100%); padding: 30px 20px; text-align: center;">
+            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: bold; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">
+                Report Ready!
+            </h1>
+            <p style="color: #ffffff; margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;">
+                Your intelligence brief has been generated
+            </p>
+        </div>
+        
+        <!-- Main Content -->
+        <div style="padding: 40px 30px;">
+            <p style="color: #333333; font-size: 18px; line-height: 1.6; margin: 0 0 25px 0;">
+                Hello!
+            </p>
+            
+            <p style="color: #555555; font-size: 16px; line-height: 1.6; margin: 0 0 30px 0;">
+                Great news! Your requested report <strong style="color: #8B6636;">"{title}"</strong> has been generated successfully and is ready for download.
+            </p>
+            
+            <!-- Report Details Card -->
+            <div style="background-color: #f8f6f3; border-left: 4px solid #C8A882; padding: 25px; margin: 30px 0; border-radius: 8px;">
+                <h3 style="color: #8B6636; margin: 0 0 20px 0; font-size: 20px; display: flex; align-items: center;">
+                    📋  Report Details
+                </h3>
+                
+                <table style="width: 100%; border-collapse: collapse;">
+                    <tr>
+                        <td style="padding: 8px 0; color: #666666; font-weight: bold; width: 30%;">Title:</td>
+                        <td style="padding: 8px 0; color: #333333;">{title}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px 0; color: #666666; font-weight: bold;">Generated:</td>
+                        <td style="padding: 8px 0; color: #333333;">{datetime.now().strftime('%B %d, %Y at %I:%M %p')}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px 0; color: #666666; font-weight: bold;">File Size:</td>
+                        <td style="padding: 8px 0; color: #333333;">{file_size_mb:.2f} MB ({file_size_bytes:,} bytes)</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px 0; color: #666666; font-weight: bold;">Status:</td>
+                        <td style="padding: 8px 0;">
+                            <span style="background-color: #d4edda; color: #155724; padding: 4px 12px; border-radius: 20px; font-size: 14px; font-weight: bold;">
+                                ✅ Optimized & Ready
+                            </span>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+            
+            <p style="color: #555555; font-size: 16px; line-height: 1.6; margin: 25px 0;">
+                The complete report is attached to this email. Simply click on the attachment to download and view your personalized analysis.
+            </p>
+        </div>
+        
+        <!-- Footer -->
+        <div style="background-color: #2a2a2a; padding: 30px 20px; text-align: center;">
+            <div style="border-bottom: 1px solid #444444; padding-bottom: 20px; margin-bottom: 20px;">
+                <h3 style="color: #C8A882; margin: 0 0 10px 0; font-size: 20px;">
+                    Periwatch Team
+                </h3>
+                <p style="color: #cccccc; margin: 0; font-size: 14px;">
+                    Delivering insights that matter
+                </p>
+            </div>
+            
+            <p style="color: #999999; font-size: 12px; margin: 0 0 10px 0; line-height: 1.4;">
+                This email was sent automatically by Periwatch PDF Generator.<br>
+                If you have any questions, please contact our support team.
+            </p>
+            
+            <p style="color: #666666; font-size: 11px; margin: 0;">
+                © 2025 Periwatch. All rights reserved.
+            </p>
+        </div>
+    </div>
+</body>
+</html>
             """
             
             email = EmailMessage(
@@ -333,6 +519,7 @@ If you have any questions, please contact support.
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 to=[recipient_email]
             )
+            email.content_subtype = "html"  # Set email to HTML format
             # Attach PDF
             pdf_buffer.seek(0)
             pdf_data = pdf_buffer.read()
