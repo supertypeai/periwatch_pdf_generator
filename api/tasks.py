@@ -9,6 +9,8 @@ import logging
 from io import BytesIO
 import fitz  # PyMuPDF for compression
 from PIL import Image
+import resend
+import base64
 
 logger = logging.getLogger(__name__)
 
@@ -260,7 +262,7 @@ class PDFGenerationTask:
             pdf.setFillColor(colors.HexColor("#E5E5E5"))
             text2 = "Please wait while we generate your complete report"
             text2_width = pdf.stringWidth(text2, body_font, 18)
-            pdf.drawString((width - text2_width) / 2, height/2 + 67, text2)
+            pdf.drawString((width - text2_width) / 2, height/2 + 55, text2)
             
             # Info box
             box_width = 450
@@ -412,152 +414,495 @@ class PDFGenerationTask:
         background_thread.start()
     
     def _send_pdf_email(self, recipient_email, title, pdf_buffer):
-        """Send PDF via email with detailed error handling"""
+        """Send PDF via email using Resend API with detailed error handling"""
         try:
-            logger.info(f"Attempting to send PDF email to {recipient_email}")
+            logger.info(f"Attempting to send PDF email to {recipient_email} using Resend")
+            
+            # Initialize Resend with API key
+            if not hasattr(settings, 'RESEND_API_KEY') or not settings.RESEND_API_KEY:
+                raise ValueError("RESEND_API_KEY not found in settings. Please set it in your environment variables.")
+            
+            resend.api_key = settings.RESEND_API_KEY
             
             subject = f"Your {title} Report is Ready"
+            
             # Get file size for email message
             pdf_buffer.seek(0)
-            file_size_bytes = len(pdf_buffer.read())
-            file_size_mb = file_size_bytes / 1024 / 1024
+            pdf_data = pdf_buffer.read()
             
-            message = f"""
+            # Convert PDF to base64 for attachment
+            pdf_base64 = base64.b64encode(pdf_data).decode('utf-8')
+            
+            html_message = f"""
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Periwatch Report Ready</title>
+    <style>
+        @import url('data:font/woff2;base64,/* Inter font will be embedded */');
+        
+        /* Responsive Email Styles */
+        @media screen and (max-width: 640px) {{
+            .email-container {{
+                width: 100% !important;
+                max-width: none !important;
+                margin: 0 !important;
+                border-radius: 0 !important;
+            }}
+            .email-header {{
+                padding: 25px 15px !important;
+            }}
+            .email-header h1 {{
+                font-size: 24px !important;
+            }}
+            .email-header p {{
+                font-size: 14px !important;
+            }}
+            .email-content {{
+                padding: 30px 15px !important;
+            }}
+            .email-content p {{
+                font-size: 15px !important;
+            }}
+            .report-card {{
+                padding: 20px 15px !important;
+                margin: 20px 0 !important;
+            }}
+            .report-card h3 {{
+                font-size: 18px !important;
+            }}
+            .report-table td {{
+                padding: 8px 0 !important;
+                font-size: 14px !important;
+                display: block !important;
+                width: 100% !important;
+            }}
+            .report-table .label {{
+                font-weight: 600 !important;
+                margin-bottom: 5px !important;
+            }}
+            .report-table .value {{
+                margin-bottom: 15px !important;
+                padding-left: 0 !important;
+            }}
+            .status-badge {{
+                font-size: 12px !important;
+                padding: 3px 10px !important;
+            }}
+            .email-footer {{
+                padding: 25px 15px !important;
+            }}
+            .email-footer h3 {{
+                font-size: 18px !important;
+            }}
+            .email-footer p {{
+                font-size: 11px !important;
+            }}
+            .cta-button {{
+                padding: 15px 20px !important;
+                font-size: 14px !important;
+            }}
+        }}
+        
+        @media screen and (max-width: 480px) {{
+            .email-header h1 {{
+                font-size: 22px !important;
+            }}
+            .email-content p {{
+                font-size: 14px !important;
+            }}
+            .report-card h3 {{
+                font-size: 16px !important;
+            }}
+        }}
+        
+        /* Font fallbacks */
+        .inter-font {{
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        }}
+        
+        .inter-bold {{
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            font-weight: 700;
+        }}
+    </style>
 </head>
-<body style="margin: 0; padding: 0; font-family: 'Arial', 'Helvetica', sans-serif; background-color: #f4f4f4;">
-    <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
-        
-        <!-- Header -->
-        <div style="background: linear-gradient(135deg, #C8A882 0%, #8B6636 100%); padding: 30px 20px; text-align: center;">
-            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: bold; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">
-                Report Ready!
-            </h1>
-            <p style="color: #ffffff; margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;">
-                Your intelligence brief has been generated
-            </p>
-        </div>
-        
-        <!-- Main Content -->
-        <div style="padding: 40px 30px;">
-            <p style="color: #333333; font-size: 18px; line-height: 1.6; margin: 0 0 25px 0;">
-                Hello!
-            </p>
-            
-            <p style="color: #555555; font-size: 16px; line-height: 1.6; margin: 0 0 30px 0;">
-                Great news! Your requested report <strong style="color: #8B6636;">"{title}"</strong> has been generated successfully and is ready for download.
-            </p>
-            
-            <!-- Report Details Card -->
-            <div style="background-color: #f8f6f3; border-left: 4px solid #C8A882; padding: 25px; margin: 30px 0; border-radius: 8px;">
-                <h3 style="color: #8B6636; margin: 0 0 20px 0; font-size: 20px; display: flex; align-items: center;">
-                    📋  Report Details
-                </h3>
-                
-                <table style="width: 100%; border-collapse: collapse;">
-                    <tr>
-                        <td style="padding: 8px 0; color: #666666; font-weight: bold; width: 30%;">Title:</td>
-                        <td style="padding: 8px 0; color: #333333;">{title}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px 0; color: #666666; font-weight: bold;">Generated:</td>
-                        <td style="padding: 8px 0; color: #333333;">{datetime.now().strftime('%B %d, %Y at %I:%M %p')}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px 0; color: #666666; font-weight: bold;">File Size:</td>
-                        <td style="padding: 8px 0; color: #333333;">{file_size_mb:.2f} MB ({file_size_bytes:,} bytes)</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px 0; color: #666666; font-weight: bold;">Status:</td>
-                        <td style="padding: 8px 0;">
-                            <span style="background-color: #d4edda; color: #155724; padding: 4px 12px; border-radius: 20px; font-size: 14px; font-weight: bold;">
-                                ✅ Optimized & Ready
-                            </span>
-                        </td>
-                    </tr>
-                </table>
-            </div>
-            
-            <p style="color: #555555; font-size: 16px; line-height: 1.6; margin: 25px 0;">
-                The complete report is attached to this email. Simply click on the attachment to download and view your personalized analysis.
-            </p>
-        </div>
-        
-        <!-- Footer -->
-        <div style="background-color: #2a2a2a; padding: 30px 20px; text-align: center;">
-            <div style="border-bottom: 1px solid #444444; padding-bottom: 20px; margin-bottom: 20px;">
-                <h3 style="color: #C8A882; margin: 0 0 10px 0; font-size: 20px;">
-                    Periwatch Team
-                </h3>
-                <p style="color: #cccccc; margin: 0; font-size: 14px;">
-                    Delivering insights that matter
-                </p>
-            </div>
-            
-            <p style="color: #999999; font-size: 12px; margin: 0 0 10px 0; line-height: 1.4;">
-                This email was sent automatically by Periwatch PDF Generator.<br>
-                If you have any questions, please contact our support team.
-            </p>
-            
-            <p style="color: #666666; font-size: 11px; margin: 0;">
-                © 2025 Periwatch. All rights reserved.
-            </p>
-        </div>
-    </div>
+<body style="margin: 0; padding: 0; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; background-color: #f4f4f4; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; min-height: 100vh;">
+    <table role="presentation" style="width: 100%; margin: 0; padding: 0; background-color: #f4f4f4; min-height: 100vh;" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+            <td align="center" style="padding: 0;">
+                <div class="email-container inter-font" style="max-width: 1000px; width: 100%; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.12);">
+                    
+                    <!-- Header -->
+                    <div class="email-header" style="background: linear-gradient(135deg, #C8A882 0%, #8B6636 100%); padding: 30px 25px; text-align: center;">
+                        <h1 class="inter-bold" style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 700; text-shadow: 0 2px 4px rgba(0,0,0,0.3); line-height: 1.2;">
+                            Report Ready!
+                        </h1>
+                        <p class="inter-font" style="color: #ffffff; margin: 12px 0 0 0; font-size: 16px; opacity: 0.95; line-height: 1.4; font-weight: 400;">
+                            Your intelligence brief has been generated
+                        </p>
+                    </div>
+                    
+                    <!-- Main Content -->
+                    <div class="email-content" style="padding: 35px 30px; text-align: left;">
+                        <p class="inter-font" style="color: #333333; font-size: 17px; line-height: 1.6; margin: 0 0 20px 0; font-weight: 400;">
+                            Hello!
+                        </p>
+                        
+                        <p class="inter-font" style="color: #555555; font-size: 16px; line-height: 1.6; margin: 0 0 28px 0; font-weight: 400;">
+                            Great news! Your requested report <strong class="inter-bold" style="color: #8B6636; font-weight: 600;">"{title}"</strong> has been generated successfully and is ready for download.
+                        </p>
+                        
+                        <!-- Report Details Card -->
+                        <div class="report-card" style="background-color: #f8f6f3; border-left: 4px solid #C8A882; padding: 25px; margin: 28px 0; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
+                            <h3 class="inter-bold" style="color: #8B6636; margin: 0 0 20px 0; font-size: 20px; line-height: 1.3; font-weight: 600;">
+                                📋  Report Details
+                            </h3>
+                            
+                            <table class="report-table" style="width: 100%; border-collapse: collapse;">
+                                <tr>
+                                    <td class="label inter-font" style="padding: 10px 0; color: #666666; font-weight: 600; width: 35%; vertical-align: top; font-size: 15px;">Title:</td>
+                                    <td class="value inter-font" style="padding: 10px 0; color: #333333; word-break: break-word; font-size: 15px; font-weight: 400;">{title}</td>
+                                </tr>
+                                <tr>
+                                    <td class="label inter-font" style="padding: 10px 0; color: #666666; font-weight: 600; vertical-align: top; font-size: 15px;">Generated:</td>
+                                    <td class="value inter-font" style="padding: 10px 0; color: #333333; font-size: 15px; font-weight: 400;">{datetime.now().strftime('%B %d, %Y at %I:%M %p')}</td>
+                                </tr>
+                                <tr>
+                                    <td class="label inter-font" style="padding: 10px 0; color: #666666; font-weight: 600; vertical-align: top; font-size: 15px;">Status:</td>
+                                    <td class="value" style="padding: 10px 0;">
+                                        <span class="status-badge inter-font" style="background-color: #d4edda; color: #155724; padding: 6px 15px; border-radius: 25px; font-size: 14px; font-weight: 600; display: inline-block;">
+                                            ✅ Optimized & Ready
+                                        </span>
+                                    </td>
+                                </tr>
+                            </table>
+                        </div>
+                        
+                        <p class="inter-font" style="color: #555555; font-size: 17px; line-height: 1.6; margin: 30px 0; font-weight: 400;">
+                            The complete report is attached to this email. Simply click on the attachment to download and view your personalized analysis.
+                        </p>
+                    </div>
+                    
+                    <!-- Footer -->
+                    <div class="email-footer" style="background-color: #2a2a2a; padding: 35px 30px; text-align: center;">
+                        <div style="border-bottom: 1px solid #444444; padding-bottom: 25px; margin-bottom: 25px;">
+                            <h3 class="inter-bold" style="color: #C8A882; margin: 0 0 12px 0; font-size: 22px; line-height: 1.3; font-weight: 600;">
+                                Periwatch Team
+                            </h3>
+                            <p class="inter-font" style="color: #cccccc; margin: 0; font-size: 15px; line-height: 1.4; font-weight: 400;">
+                                Delivering insights that matter
+                            </p>
+                        </div>
+                        
+                        <p class="inter-font" style="color: #999999; font-size: 13px; margin: 0 0 12px 0; line-height: 1.5; font-weight: 400;">
+                            This email was sent automatically by Periwatch PDF Generator.<br>
+                            If you have any questions, please contact our support team.
+                        </p>
+                        
+                        <p class="inter-font" style="color: #666666; font-size: 12px; margin: 0; line-height: 1.4; font-weight: 400;">
+                            © 2025 Periwatch. All rights reserved.
+                        </p>
+                    </div>
+                </div>
+            </td>
+        </tr>
+    </table>
+    
+    <!-- Fallback for Outlook -->
+    <!--[if mso]>
+    <style>
+        .email-container {{ width: 1000px !important; }}
+        .email-header h1 {{ font-size: 28px !important; }}
+        .email-content {{ padding: 35px 30px !important; }}
+        .inter-font, .inter-bold {{ font-family: Arial, sans-serif !important; }}
+    </style>
+    <![endif]-->
 </body>
 </html>
             """
             
-            email = EmailMessage(
-                subject=subject,
-                body=message,
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                to=[recipient_email]
-            )
-            email.content_subtype = "html"  # Set email to HTML format
-            # Attach PDF
-            pdf_buffer.seek(0)
-            pdf_data = pdf_buffer.read()
-            email.attach(f'{title}.pdf', pdf_data, 'application/pdf')
-
-            email.send()
-            logger.info(f"Email sent successfully to {recipient_email} (PDF size: {len(pdf_data)} bytes)")
+            # Send email using Resend API
+            params = {
+                "from": settings.DEFAULT_FROM_EMAIL,
+                "to": [recipient_email],
+                "subject": subject,
+                "html": html_message,
+                "attachments": [
+                    {
+                        "filename": f"{title}.pdf",
+                        "content": pdf_base64,
+                        "content_type": "application/pdf"
+                    }
+                ]
+            }
+            
+            response = resend.Emails.send(params)
+            
+            logger.info(f"Email sent successfully via Resend to {recipient_email}")
+            logger.info(f"Resend response: {response}")
             
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"Failed to send email to {recipient_email}: {error_msg}")
+            logger.error(f"Failed to send email via Resend to {recipient_email}: {error_msg}")
             
-            if "Username and Password not accepted" in error_msg or "BadCredentials" in error_msg:
-                logger.error("EMAIL ERROR: Gmail credentials rejected. Please check:")
-                logger.error("1. Enable 2-Factor Authentication on Gmail")
-                logger.error("2. Generate App Password (not regular password)")
-                logger.error("3. Use App Password in EMAIL_HOST_PASSWORD")
-                logger.error("4. Ensure EMAIL_HOST_USER matches Gmail address")
+            # Specific Resend error handling
+            if "api_key" in error_msg.lower() or "unauthorized" in error_msg.lower():
+                logger.error("RESEND ERROR: API key issue. Please check:")
+                logger.error("1. RESEND_API_KEY is set in environment variables")
+                logger.error("2. API key is valid and not expired")
+                logger.error("3. API key has proper permissions")
                 
-            elif "Connection refused" in error_msg or "timeout" in error_msg.lower():
-                logger.error("EMAIL ERROR: SMTP connection failed. Please check:")
-                logger.error("1. EMAIL_HOST and EMAIL_PORT settings")
-                logger.error("2. Network connectivity")
-                logger.error("3. Firewall/antivirus blocking SMTP")
+            elif "rate limit" in error_msg.lower():
+                logger.error("RESEND ERROR: Rate limit exceeded. Please:")
+                logger.error("1. Check your Resend plan limits")
+                logger.error("2. Implement rate limiting in your application")
+                logger.error("3. Consider upgrading your Resend plan")
                 
-            elif "authentication failed" in error_msg.lower():
-                logger.error("EMAIL ERROR: SMTP authentication failed. Please check:")
-                logger.error("1. EMAIL_HOST_USER and EMAIL_HOST_PASSWORD")
-                logger.error("2. Email provider SMTP settings")
+            elif "invalid email" in error_msg.lower() or "malformed" in error_msg.lower():
+                logger.error("RESEND ERROR: Email format issue. Please check:")
+                logger.error(f"1. Recipient email format: {recipient_email}")
+                logger.error(f"2. From email format: {settings.DEFAULT_FROM_EMAIL}")
+                logger.error("3. Email addresses are properly formatted")
                 
-            logger.error(f"Current email settings:")
-            logger.error(f"- HOST: {getattr(settings, 'EMAIL_HOST', 'Not set')}")
-            logger.error(f"- PORT: {getattr(settings, 'EMAIL_PORT', 'Not set')}")
-            logger.error(f"- USER: {getattr(settings, 'EMAIL_HOST_USER', 'Not set')}")
-            logger.error(f"- TLS: {getattr(settings, 'EMAIL_USE_TLS', 'Not set')}")
-            logger.error(f"- SSL: {getattr(settings, 'EMAIL_USE_SSL', 'Not set')}")
-            logger.error(f"- FROM: {getattr(settings, 'DEFAULT_FROM_EMAIL', 'Not set')}")
-            raise
+            elif "domain" in error_msg.lower():
+                logger.error("RESEND ERROR: Domain verification issue. Please:")
+                logger.error("1. Verify your sending domain in Resend dashboard")
+                logger.error("2. Check DNS records are properly configured")
+                logger.error("3. Ensure FROM email uses verified domain")
+            
+            logger.error("Current Resend settings:")
+            logger.error(f"- API Key configured: {'Yes' if hasattr(settings, 'RESEND_API_KEY') and settings.RESEND_API_KEY else 'No'}")
+            logger.error(f"- FROM email: {getattr(settings, 'DEFAULT_FROM_EMAIL', 'Not set')}")
+            logger.error(f"- TO email: {recipient_email}")
+            
+            # Try fallback to Django email if Resend fails
+            logger.info("Attempting fallback to Django email system...")
+            try:
+                self._send_pdf_email_django_fallback(recipient_email, title, pdf_buffer)
+                logger.info("Successfully sent email using Django fallback")
+            except Exception as fallback_error:
+                logger.error(f"Django email fallback also failed: {fallback_error}")
+                raise e  # Raise the original Resend error
+    
+    def _send_pdf_email_django_fallback(self, recipient_email, title, pdf_buffer):
+        """Fallback method using Django's built-in email system"""
+        logger.info(f"Using Django email fallback for {recipient_email}")
+        
+        subject = f"Your {title} Report is Ready"
+        
+        # Get file size for email message
+        pdf_buffer.seek(0)
+        pdf_data = pdf_buffer.read()
+        
+        message = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Periwatch Report Ready</title>
+    <style>
+        @import url('data:font/woff2;base64,/* Inter font will be embedded */');
+        
+        /* Responsive Email Styles */
+        @media screen and (max-width: 640px) {{
+            .email-container {{
+                width: 100% !important;
+                max-width: none !important;
+                margin: 0 !important;
+                border-radius: 0 !important;
+            }}
+            .email-header {{
+                padding: 25px 15px !important;
+            }}
+            .email-header h1 {{
+                font-size: 24px !important;
+            }}
+            .email-header p {{
+                font-size: 14px !important;
+            }}
+            .email-content {{
+                padding: 30px 15px !important;
+            }}
+            .email-content p {{
+                font-size: 15px !important;
+            }}
+            .report-card {{
+                padding: 20px 15px !important;
+                margin: 20px 0 !important;
+            }}
+            .report-card h3 {{
+                font-size: 18px !important;
+            }}
+            .report-table td {{
+                padding: 8px 0 !important;
+                font-size: 14px !important;
+                display: block !important;
+                width: 100% !important;
+            }}
+            .report-table .label {{
+                font-weight: 600 !important;
+                margin-bottom: 5px !important;
+            }}
+            .report-table .value {{
+                margin-bottom: 15px !important;
+                padding-left: 0 !important;
+            }}
+            .status-badge {{
+                font-size: 12px !important;
+                padding: 3px 10px !important;
+            }}
+            .email-footer {{
+                padding: 25px 15px !important;
+            }}
+            .email-footer h3 {{
+                font-size: 18px !important;
+            }}
+            .email-footer p {{
+                font-size: 11px !important;
+            }}
+            .cta-button {{
+                padding: 15px 20px !important;
+                font-size: 14px !important;
+            }}
+        }}
+        
+        @media screen and (max-width: 480px) {{
+            .email-header h1 {{
+                font-size: 22px !important;
+            }}
+            .email-content p {{
+                font-size: 14px !important;
+            }}
+            .report-card h3 {{
+                font-size: 16px !important;
+            }}
+        }}
+        
+        /* Font fallbacks */
+        .inter-font {{
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        }}
+        
+        .inter-bold {{
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            font-weight: 700;
+        }}
+    </style>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; background-color: #f4f4f4; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; min-height: 100vh;">
+    <table role="presentation" style="width: 100%; margin: 0; padding: 0; background-color: #f4f4f4; min-height: 100vh;" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+            <td align="center" style="padding: 0;">
+                <div class="email-container inter-font" style="max-width: 1000px; width: 100%; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.12);">
+                    
+                    <!-- Header -->
+                    <div class="email-header" style="background: linear-gradient(135deg, #C8A882 0%, #8B6636 100%); padding: 30px 25px; text-align: center;">
+                        <h1 class="inter-bold" style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 700; text-shadow: 0 2px 4px rgba(0,0,0,0.3); line-height: 1.2;">
+                            Report Ready!
+                        </h1>
+                        <p class="inter-font" style="color: #ffffff; margin: 12px 0 0 0; font-size: 16px; opacity: 0.95; line-height: 1.4; font-weight: 400;">
+                            Your intelligence brief has been generated
+                        </p>
+                    </div>
+                    
+                    <!-- Main Content -->
+                    <div class="email-content" style="padding: 35px 30px; text-align: left;">
+                        <p class="inter-font" style="color: #333333; font-size: 17px; line-height: 1.6; margin: 0 0 20px 0; font-weight: 400;">
+                            Hello!
+                        </p>
+                        
+                        <p class="inter-font" style="color: #555555; font-size: 16px; line-height: 1.6; margin: 0 0 28px 0; font-weight: 400;">
+                            Great news! Your requested report <strong class="inter-bold" style="color: #8B6636; font-weight: 600;">"{title}"</strong> has been generated successfully and is ready for download.
+                        </p>
+                        
+                        <!-- Report Details Card -->
+                        <div class="report-card" style="background-color: #f8f6f3; border-left: 4px solid #C8A882; padding: 25px; margin: 28px 0; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
+                            <h3 class="inter-bold" style="color: #8B6636; margin: 0 0 20px 0; font-size: 20px; line-height: 1.3; font-weight: 600;">
+                                📋  Report Details
+                            </h3>
+                            
+                            <table class="report-table" style="width: 100%; border-collapse: collapse;">
+                                <tr>
+                                    <td class="label inter-font" style="padding: 8px 0; color: #666666; font-weight: 600; width: 35%; vertical-align: top; font-size: 14px;">Title:</td>
+                                    <td class="value inter-font" style="padding: 8px 0; color: #333333; word-break: break-word; font-size: 14px; font-weight: 400;">{title}</td>
+                                </tr>
+                                <tr>
+                                    <td class="label inter-font" style="padding: 8px 0; color: #666666; font-weight: 600; vertical-align: top; font-size: 14px;">Generated:</td>
+                                    <td class="value inter-font" style="padding: 8px 0; color: #333333; font-size: 14px; font-weight: 400;">{datetime.now().strftime('%B %d, %Y at %I:%M %p')}</td>
+                                </tr>
+                                <tr>
+                                    <td class="label inter-font" style="padding: 8px 0; color: #666666; font-weight: 600; vertical-align: top; font-size: 14px;">Status:</td>
+                                    <td class="value" style="padding: 8px 0;">
+                                        <span class="status-badge inter-font" style="background-color: #d4edda; color: #155724; padding: 5px 12px; border-radius: 25px; font-size: 13px; font-weight: 600; display: inline-block;">
+                                            ✅ Optimized & Ready
+                                        </span>
+                                    </td>
+                                </tr>
+                            </table>
+                        </div>
+                        
+                        <p class="inter-font" style="color: #555555; font-size: 16px; line-height: 1.6; margin: 25px 0; font-weight: 400;">
+                            The complete report is attached to this email. Simply click on the attachment to download and view your personalized analysis.
+                        </p>
+                    </div>
+                    
+                    <!-- Footer -->
+                    <div class="email-footer" style="background-color: #2a2a2a; padding: 30px 25px; text-align: center;">
+                        <div style="border-bottom: 1px solid #444444; padding-bottom: 20px; margin-bottom: 20px;">
+                            <h3 class="inter-bold" style="color: #C8A882; margin: 0 0 10px 0; font-size: 20px; line-height: 1.3; font-weight: 600;">
+                                Periwatch Team
+                            </h3>
+                            <p class="inter-font" style="color: #cccccc; margin: 0; font-size: 14px; line-height: 1.4; font-weight: 400;">
+                                Delivering insights that matter
+                            </p>
+                        </div>
+                        
+                        <p class="inter-font" style="color: #999999; font-size: 12px; margin: 0 0 10px 0; line-height: 1.5; font-weight: 400;">
+                            This email was sent automatically by Periwatch PDF Generator.<br>
+                            If you have any questions, please contact our support team.
+                        </p>
+                        
+                        <p class="inter-font" style="color: #666666; font-size: 11px; margin: 0; line-height: 1.4; font-weight: 400;">
+                            © 2025 Periwatch. All rights reserved.
+                        </p>
+                    </div>
+                </div>
+            </td>
+        </tr>
+    </table>
+    
+    <!-- Fallback for Outlook -->
+    <!--[if mso]>
+    <style>
+        .email-container {{ width: 1000px !important; }}
+        .email-header h1 {{ font-size: 28px !important; }}
+        .email-content {{ padding: 35px 30px !important; }}
+        .inter-font, .inter-bold {{ font-family: Arial, sans-serif !important; }}
+    </style>
+    <![endif]-->
+</body>
+</html>
+        """
+        
+        email = EmailMessage(
+            subject=subject,
+            body=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[recipient_email]
+        )
+        email.content_subtype = "html"  # Set email to HTML format
+        
+        # Attach PDF
+        pdf_buffer.seek(0)
+        pdf_data = pdf_buffer.read()
+        email.attach(f'{title}.pdf', pdf_data, 'application/pdf')
+
+        email.send()
+        logger.info(f"Fallback email sent successfully to {recipient_email} (PDF size: {len(pdf_data)} bytes)")
     
     def get_task_status(self, task_id):
         """Get status of a specific task"""
