@@ -75,3 +75,5 @@ urllib3==2.5.0
 webencodings==0.5.1
 websockets==15.0.1
 django-cors-headers==4.3.1
+PyMuPDF==1.26.3
+resend
