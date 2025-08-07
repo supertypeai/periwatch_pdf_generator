@@ -9,7 +9,8 @@ import logging
 from io import BytesIO
 import fitz  # PyMuPDF for compression
 from PIL import Image
-import resend
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
 import base64
 
 logger = logging.getLogger(__name__)
@@ -414,25 +415,15 @@ class PDFGenerationTask:
         background_thread.start()
     
     def _send_pdf_email(self, recipient_email, title, pdf_buffer):
-        """Send PDF via email using Resend API with detailed error handling"""
+        """Send PDF via email using SendGrid API with detailed error handling"""
         try:
-            logger.info(f"Attempting to send PDF email to {recipient_email} using Resend")
-            
-            # Initialize Resend with API key
-            if not hasattr(settings, 'RESEND_API_KEY') or not settings.RESEND_API_KEY:
-                raise ValueError("RESEND_API_KEY not found in settings. Please set it in your environment variables.")
-            
-            resend.api_key = settings.RESEND_API_KEY
-            
+            logger.info(f"Attempting to send PDF email to {recipient_email} using SendGrid")
+            if not hasattr(settings, 'SENDGRID_API_KEY') or not settings.SENDGRID_API_KEY:
+                raise ValueError("SENDGRID_API_KEY not found in settings. Please set it in your environment variables.")
             subject = f"Your {title} Report is Ready"
-            
-            # Get file size for email message
             pdf_buffer.seek(0)
             pdf_data = pdf_buffer.read()
-            
-            # Convert PDF to base64 for attachment
             pdf_base64 = base64.b64encode(pdf_data).decode('utf-8')
-            
             html_message = f"""
 <!DOCTYPE html>
 <html>
@@ -624,68 +615,60 @@ class PDFGenerationTask:
 </html>
             """
             
-            # Send email using Resend API
-            params = {
-                "from": settings.DEFAULT_FROM_EMAIL,
-                "to": [recipient_email],
-                "subject": subject,
-                "html": html_message,
-                "attachments": [
-                    {
-                        "filename": f"{title}.pdf",
-                        "content": pdf_base64,
-                        "content_type": "application/pdf"
-                    }
-                ]
-            }
-            
-            response = resend.Emails.send(params)
-            
-            logger.info(f"Email sent successfully via Resend to {recipient_email}")
-            logger.info(f"Resend response: {response}")
-            
+            message = Mail(
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to_emails=recipient_email,
+                subject=subject,
+                html_content=html_message
+            )
+            attachment = Attachment(
+                FileContent(pdf_base64),
+                FileName(f'{title}.pdf'),
+                FileType('application/pdf'),
+                Disposition('attachment')
+            )
+            message.attachment = attachment
+            sg = SendGridAPIClient(settings.SENDGRID_API_KEY)
+            response = sg.send(message)
+            logger.info(f"Email sent successfully via SendGrid to {recipient_email}")
+            logger.info(f"SendGrid response: {response.status_code}")
+            if response.status_code != 202:
+                logger.error(f"SendGrid returned status code: {response.status_code}")
+                logger.error(f"Response body: {response.body}")
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"Failed to send email via Resend to {recipient_email}: {error_msg}")
-            
-            # Specific Resend error handling
+            logger.error(f"Failed to send email via SendGrid to {recipient_email}: {error_msg}")
             if "api_key" in error_msg.lower() or "unauthorized" in error_msg.lower():
-                logger.error("RESEND ERROR: API key issue. Please check:")
-                logger.error("1. RESEND_API_KEY is set in environment variables")
+                logger.error("SENDGRID ERROR: API key issue. Please check:")
+                logger.error("1. SENDGRID_API_KEY is set in environment variables")
                 logger.error("2. API key is valid and not expired")
-                logger.error("3. API key has proper permissions")
-                
+                logger.error("3. API key has 'Mail Send' permissions")
             elif "rate limit" in error_msg.lower():
-                logger.error("RESEND ERROR: Rate limit exceeded. Please:")
-                logger.error("1. Check your Resend plan limits")
+                logger.error("SENDGRID ERROR: Rate limit exceeded. Please:")
+                logger.error("1. Check your SendGrid plan limits")
                 logger.error("2. Implement rate limiting in your application")
-                logger.error("3. Consider upgrading your Resend plan")
-                
+                logger.error("3. Consider upgrading your SendGrid plan")
             elif "invalid email" in error_msg.lower() or "malformed" in error_msg.lower():
-                logger.error("RESEND ERROR: Email format issue. Please check:")
+                logger.error("SENDGRID ERROR: Email format issue. Please check:")
                 logger.error(f"1. Recipient email format: {recipient_email}")
                 logger.error(f"2. From email format: {settings.DEFAULT_FROM_EMAIL}")
                 logger.error("3. Email addresses are properly formatted")
-                
             elif "domain" in error_msg.lower():
-                logger.error("RESEND ERROR: Domain verification issue. Please:")
-                logger.error("1. Verify your sending domain in Resend dashboard")
+                logger.error("SENDGRID ERROR: Domain verification issue. Please:")
+                logger.error("1. Verify your sending domain in SendGrid dashboard")
                 logger.error("2. Check DNS records are properly configured")
                 logger.error("3. Ensure FROM email uses verified domain")
-            
-            logger.error("Current Resend settings:")
-            logger.error(f"- API Key configured: {'Yes' if hasattr(settings, 'RESEND_API_KEY') and settings.RESEND_API_KEY else 'No'}")
+            logger.error("Current SendGrid settings:")
+            logger.error(f"- API Key configured: {'Yes' if hasattr(settings, 'SENDGRID_API_KEY') and settings.SENDGRID_API_KEY else 'No'}")
             logger.error(f"- FROM email: {getattr(settings, 'DEFAULT_FROM_EMAIL', 'Not set')}")
             logger.error(f"- TO email: {recipient_email}")
-            
-            # Try fallback to Django email if Resend fails
             logger.info("Attempting fallback to Django email system...")
             try:
                 self._send_pdf_email_django_fallback(recipient_email, title, pdf_buffer)
                 logger.info("Successfully sent email using Django fallback")
             except Exception as fallback_error:
                 logger.error(f"Django email fallback also failed: {fallback_error}")
-                raise e  # Raise the original Resend error
+                raise e  # Raise the original SendGrid error
     
     def _send_pdf_email_django_fallback(self, recipient_email, title, pdf_buffer):
         """Fallback method using Django's built-in email system"""
