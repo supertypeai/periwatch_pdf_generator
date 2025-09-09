@@ -361,7 +361,7 @@ def generate_ticker_page(pdf, ticker, height):
 
 def get_company_info_with_tavily(company_name, model='gemini-2.5-flash'):
     # First, search for company information using Tavily
-    search_results = tavily1.search(
+    search_results = tavily.search(
         query=f"{company_name} Indonesia company or organization information (the name maybe is an abreviation, SEARCH INTENSIVELY IN INDONESIA FIRST. If not found in Indonesia, search in Southeast Asia, then globally.",
         search_depth="advanced",
         include_answer="advanced",
@@ -451,7 +451,7 @@ def safe_get(json, key, default='-'):
     return value
 
 def get_company_image_with_tavily(links):
-    search_results = tavily1.search(
+    search_results = tavily.search(
         query=f"From '{links}'. It's about company in Indonesia (or Southeast Asia), provide its official logo URL from the links.",
         search_depth="advanced",
         include_images=True,

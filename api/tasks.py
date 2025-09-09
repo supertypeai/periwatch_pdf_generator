@@ -9,11 +9,29 @@ import logging
 from io import BytesIO
 import fitz  # PyMuPDF for compression
 from PIL import Image
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError
+from email.mime.base import MIMEBase
+from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
+from email.mime.text import MIMEText
 import base64
 
 logger = logging.getLogger(__name__)
+
+def format_email_with_display_name(email, display_name=None):
+    """Format email address with display name: 'Display Name <email@domain.com>'"""
+    if not display_name:
+        display_name = getattr(settings, 'DEFAULT_FROM_NAME', 'Periwatch')
+    
+    if not email:
+        return None
+        
+    # If display name contains special characters, wrap in quotes
+    if any(char in display_name for char in [',', ';', '<', '>', '"', '\\']):
+        display_name = f'"{display_name}"'
+    
+    return f"{display_name} <{email}>"
 
 class PDFGenerationTask:
     def __init__(self):
@@ -415,272 +433,80 @@ class PDFGenerationTask:
         background_thread.start()
     
     def _send_pdf_email(self, recipient_email, title, pdf_buffer):
-        """Send PDF via email using SendGrid API with detailed error handling"""
+        """Send PDF via email using AWS SES first, then Django fallback if SES fails."""
         try:
-            logger.info(f"Attempting to send PDF email to {recipient_email} using SendGrid")
-            if not hasattr(settings, 'SENDGRID_API_KEY') or not settings.SENDGRID_API_KEY:
-                raise ValueError("SENDGRID_API_KEY not found in settings. Please set it in your environment variables.")
-            subject = f"Your {title} Report is Ready"
-            pdf_buffer.seek(0)
-            pdf_data = pdf_buffer.read()
-            pdf_base64 = base64.b64encode(pdf_data).decode('utf-8')
-            html_message = f"""
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Periwatch Report Ready</title>
-    <style>
-        @import url('data:font/woff2;base64,/* Inter font will be embedded */');
-        
-        /* Responsive Email Styles */
-        @media screen and (max-width: 640px) {{
-            .email-container {{
-                width: 100% !important;
-                max-width: none !important;
-                margin: 0 !important;
-                border-radius: 0 !important;
-            }}
-            .email-header {{
-                padding: 25px 15px !important;
-            }}
-            .email-header h1 {{
-                font-size: 24px !important;
-            }}
-            .email-header p {{
-                font-size: 14px !important;
-            }}
-            .email-content {{
-                padding: 30px 15px !important;
-            }}
-            .email-content p {{
-                font-size: 15px !important;
-            }}
-            .report-card {{
-                padding: 20px 15px !important;
-                margin: 20px 0 !important;
-            }}
-            .report-card h3 {{
-                font-size: 18px !important;
-            }}
-            .report-table td {{
-                padding: 8px 0 !important;
-                font-size: 14px !important;
-                display: block !important;
-                width: 100% !important;
-            }}
-            .report-table .label {{
-                font-weight: 600 !important;
-                margin-bottom: 5px !important;
-            }}
-            .report-table .value {{
-                margin-bottom: 15px !important;
-                padding-left: 0 !important;
-            }}
-            .status-badge {{
-                font-size: 12px !important;
-                padding: 3px 10px !important;
-            }}
-            .email-footer {{
-                padding: 25px 15px !important;
-            }}
-            .email-footer h3 {{
-                font-size: 18px !important;
-            }}
-            .email-footer p {{
-                font-size: 11px !important;
-            }}
-            .cta-button {{
-                padding: 15px 20px !important;
-                font-size: 14px !important;
-            }}
-        }}
-        
-        @media screen and (max-width: 480px) {{
-            .email-header h1 {{
-                font-size: 22px !important;
-            }}
-            .email-content p {{
-                font-size: 14px !important;
-            }}
-            .report-card h3 {{
-                font-size: 16px !important;
-            }}
-        }}
-        
-        /* Font fallbacks */
-        .inter-font {{
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-        }}
-        
-        .inter-bold {{
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            font-weight: 700;
-        }}
-    </style>
-</head>
-<body style="margin: 0; padding: 0; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; background-color: #f4f4f4; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; min-height: 100vh;">
-    <table role="presentation" style="width: 100%; margin: 0; padding: 0; background-color: #f4f4f4; min-height: 100vh;" cellpadding="0" cellspacing="0" border="0">
-        <tr>
-            <td align="center" style="padding: 0;">
-                <div class="email-container inter-font" style="max-width: 1000px; width: 100%; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.12);">
-                    
-                    <!-- Header -->
-                    <div class="email-header" style="background: linear-gradient(135deg, #C8A882 0%, #8B6636 100%); padding: 30px 25px; text-align: center;">
-                        <h1 class="inter-bold" style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 700; text-shadow: 0 2px 4px rgba(0,0,0,0.3); line-height: 1.2;">
-                            Report Ready!
-                        </h1>
-                        <p class="inter-font" style="color: #ffffff; margin: 12px 0 0 0; font-size: 16px; opacity: 0.95; line-height: 1.4; font-weight: 400;">
-                            Your intelligence brief has been generated
-                        </p>
-                    </div>
-                    
-                    <!-- Main Content -->
-                    <div class="email-content" style="padding: 35px 30px; text-align: left;">
-                        <p class="inter-font" style="color: #333333; font-size: 17px; line-height: 1.6; margin: 0 0 20px 0; font-weight: 400;">
-                            Hello!
-                        </p>
-                        
-                        <p class="inter-font" style="color: #555555; font-size: 16px; line-height: 1.6; margin: 0 0 28px 0; font-weight: 400;">
-                            Great news! Your requested report <strong class="inter-bold" style="color: #8B6636; font-weight: 600;">"{title}"</strong> has been generated successfully and is ready for download.
-                        </p>
-                        
-                        <!-- Report Details Card -->
-                        <div class="report-card" style="background-color: #f8f6f3; border-left: 4px solid #C8A882; padding: 25px; margin: 28px 0; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
-                            <h3 class="inter-bold" style="color: #8B6636; margin: 0 0 20px 0; font-size: 20px; line-height: 1.3; font-weight: 600;">
-                                📋  Report Details
-                            </h3>
-                            
-                            <table class="report-table" style="width: 100%; border-collapse: collapse;">
-                                <tr>
-                                    <td class="label inter-font" style="padding: 10px 0; color: #666666; font-weight: 600; width: 35%; vertical-align: top; font-size: 15px;">Title:</td>
-                                    <td class="value inter-font" style="padding: 10px 0; color: #333333; word-break: break-word; font-size: 15px; font-weight: 400;">{title}</td>
-                                </tr>
-                                <tr>
-                                    <td class="label inter-font" style="padding: 10px 0; color: #666666; font-weight: 600; vertical-align: top; font-size: 15px;">Generated:</td>
-                                    <td class="value inter-font" style="padding: 10px 0; color: #333333; font-size: 15px; font-weight: 400;">{datetime.now().strftime('%B %d, %Y at %I:%M %p')}</td>
-                                </tr>
-                                <tr>
-                                    <td class="label inter-font" style="padding: 10px 0; color: #666666; font-weight: 600; vertical-align: top; font-size: 15px;">Status:</td>
-                                    <td class="value" style="padding: 10px 0;">
-                                        <span class="status-badge inter-font" style="background-color: #d4edda; color: #155724; padding: 6px 15px; border-radius: 25px; font-size: 14px; font-weight: 600; display: inline-block;">
-                                            ✅ Optimized & Ready
-                                        </span>
-                                    </td>
-                                </tr>
-                            </table>
-                        </div>
-                        
-                        <p class="inter-font" style="color: #555555; font-size: 17px; line-height: 1.6; margin: 30px 0; font-weight: 400;">
-                            The complete report is attached to this email. Simply click on the attachment to download and view your personalized analysis.
-                        </p>
-                    </div>
-                    
-                    <!-- Footer -->
-                    <div class="email-footer" style="background-color: #2a2a2a; padding: 35px 30px; text-align: center;">
-                        <div style="border-bottom: 1px solid #444444; padding-bottom: 25px; margin-bottom: 25px;">
-                            <h3 class="inter-bold" style="color: #C8A882; margin: 0 0 12px 0; font-size: 22px; line-height: 1.3; font-weight: 600;">
-                                Periwatch Team
-                            </h3>
-                            <p class="inter-font" style="color: #cccccc; margin: 0; font-size: 15px; line-height: 1.4; font-weight: 400;">
-                                Delivering insights that matter
-                            </p>
-                        </div>
-                        
-                        <p class="inter-font" style="color: #999999; font-size: 13px; margin: 0 0 12px 0; line-height: 1.5; font-weight: 400;">
-                            This email was sent automatically by Periwatch PDF Generator.<br>
-                            If you have any questions, please contact our support team.
-                        </p>
-                        
-                        <p class="inter-font" style="color: #666666; font-size: 12px; margin: 0; line-height: 1.4; font-weight: 400;">
-                            © 2025 Periwatch. All rights reserved.
-                        </p>
-                    </div>
-                </div>
-            </td>
-        </tr>
-    </table>
-    
-    <!-- Fallback for Outlook -->
-    <!--[if mso]>
-    <style>
-        .email-container {{ width: 1000px !important; }}
-        .email-header h1 {{ font-size: 28px !important; }}
-        .email-content {{ padding: 35px 30px !important; }}
-        .inter-font, .inter-bold {{ font-family: Arial, sans-serif !important; }}
-    </style>
-    <![endif]-->
-</body>
-</html>
-            """
-            
-            message = Mail(
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                to_emails=recipient_email,
-                subject=subject,
-                html_content=html_message
-            )
-            attachment = Attachment(
-                FileContent(pdf_base64),
-                FileName(f'{title}.pdf'),
-                FileType('application/pdf'),
-                Disposition('attachment')
-            )
-            message.attachment = attachment
-            sg = SendGridAPIClient(settings.SENDGRID_API_KEY)
-            response = sg.send(message)
-            logger.info(f"Email sent successfully via SendGrid to {recipient_email}")
-            logger.info(f"SendGrid response: {response.status_code}")
-            if response.status_code != 202:
-                logger.error(f"SendGrid returned status code: {response.status_code}")
-                logger.error(f"Response body: {response.body}")
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Failed to send email via SendGrid to {recipient_email}: {error_msg}")
-            if "api_key" in error_msg.lower() or "unauthorized" in error_msg.lower():
-                logger.error("SENDGRID ERROR: API key issue. Please check:")
-                logger.error("1. SENDGRID_API_KEY is set in environment variables")
-                logger.error("2. API key is valid and not expired")
-                logger.error("3. API key has 'Mail Send' permissions")
-            elif "rate limit" in error_msg.lower():
-                logger.error("SENDGRID ERROR: Rate limit exceeded. Please:")
-                logger.error("1. Check your SendGrid plan limits")
-                logger.error("2. Implement rate limiting in your application")
-                logger.error("3. Consider upgrading your SendGrid plan")
-            elif "invalid email" in error_msg.lower() or "malformed" in error_msg.lower():
-                logger.error("SENDGRID ERROR: Email format issue. Please check:")
-                logger.error(f"1. Recipient email format: {recipient_email}")
-                logger.error(f"2. From email format: {settings.DEFAULT_FROM_EMAIL}")
-                logger.error("3. Email addresses are properly formatted")
-            elif "domain" in error_msg.lower():
-                logger.error("SENDGRID ERROR: Domain verification issue. Please:")
-                logger.error("1. Verify your sending domain in SendGrid dashboard")
-                logger.error("2. Check DNS records are properly configured")
-                logger.error("3. Ensure FROM email uses verified domain")
-            logger.error("Current SendGrid settings:")
-            logger.error(f"- API Key configured: {'Yes' if hasattr(settings, 'SENDGRID_API_KEY') and settings.SENDGRID_API_KEY else 'No'}")
-            logger.error(f"- FROM email: {getattr(settings, 'DEFAULT_FROM_EMAIL', 'Not set')}")
-            logger.error(f"- TO email: {recipient_email}")
-            logger.info("Attempting fallback to Django email system...")
+            logger.info(f"Attempting to send PDF email to {recipient_email} using AWS SES")
+            return self._send_pdf_email_ses(recipient_email, title, pdf_buffer)
+        except Exception as ses_err:
+            logger.error(f"SES send failed: {ses_err}")
+            logger.info("SES send failed; falling back to Django email")
             try:
                 self._send_pdf_email_django_fallback(recipient_email, title, pdf_buffer)
                 logger.info("Successfully sent email using Django fallback")
+                return
             except Exception as fallback_error:
                 logger.error(f"Django email fallback also failed: {fallback_error}")
-                raise e  # Raise the original SendGrid error
-    
-    def _send_pdf_email_django_fallback(self, recipient_email, title, pdf_buffer):
-        """Fallback method using Django's built-in email system"""
-        logger.info(f"Using Django email fallback for {recipient_email}")
+                raise
+
+    def _send_pdf_email_ses(self, recipient_email, title, pdf_buffer):
+        """Send email using AWS SES via boto3. Uses raw MIME to attach PDF."""
+        # Validate AWS settings
+        if not all([
+            getattr(settings, 'AWS_ACCESS_KEY_ID', None),
+            getattr(settings, 'AWS_SECRET_ACCESS_KEY', None),
+            getattr(settings, 'AWS_REGION', None)
+        ]):
+            raise ValueError('AWS credentials or region not configured in settings')
+
+        ses_client = boto3.client(
+            'ses',
+            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+            region_name=settings.AWS_REGION,
+        )
+
+        # Build MIME message
+        sender_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None)
+        if not sender_email:
+            raise ValueError('DEFAULT_FROM_EMAIL not configured in settings')
         
-        subject = f"Your {title} Report is Ready"
-        
-        # Get file size for email message
+        # Format sender with display name
+        sender_formatted = format_email_with_display_name(sender_email)
+
         pdf_buffer.seek(0)
         pdf_data = pdf_buffer.read()
-        
-        message = f"""
+
+        msg = MIMEMultipart()
+        msg['Subject'] = f"Your {title} Report is Ready"
+        msg['From'] = sender_formatted  # Use formatted sender with display name
+        msg['To'] = recipient_email
+
+        # HTML body (use same rich template as Django fallback)
+        html_content = self._build_email_html(title)
+        html_body = MIMEText(html_content, 'html')
+        msg.attach(html_body)
+
+        # Attach PDF
+        part = MIMEApplication(pdf_data, _subtype='pdf')
+        part.add_header('Content-Disposition', 'attachment', filename=f"{title}.pdf")
+        msg.attach(part)
+
+        # Send raw email
+        try:
+            response = ses_client.send_raw_email(
+                Source=sender_formatted,  # Use formatted sender
+                Destinations=[recipient_email],
+                RawMessage={'Data': msg.as_string().encode('utf-8')}
+            )
+            logger.info(f"SES send_raw_email response: {response}")
+            return response
+        except (BotoCoreError, ClientError) as ses_exc:
+            logger.error(f"SES send failed: {ses_exc}")
+            raise
+    
+    def _build_email_html(self, title):
+        """Return the HTML email body used for reports (keeps original rich template)."""
+        return f"""
 <!DOCTYPE html>
 <html>
 <head>
@@ -870,11 +696,27 @@ class PDFGenerationTask:
 </body>
 </html>
         """
+    
+    def _send_pdf_email_django_fallback(self, recipient_email, title, pdf_buffer):
+        """Fallback method using Django's built-in email system"""
+        logger.info(f"Using Django email fallback for {recipient_email}")
         
+        subject = f"Your {title} Report is Ready"
+        
+        # Get file size for email message
+        pdf_buffer.seek(0)
+        pdf_data = pdf_buffer.read()
+
+        message = self._build_email_html(title)
+        
+        # Format sender with display name
+        sender_email = settings.DEFAULT_FROM_EMAIL
+        sender_formatted = format_email_with_display_name(sender_email)
+
         email = EmailMessage(
             subject=subject,
             body=message,
-            from_email=settings.DEFAULT_FROM_EMAIL,
+            from_email=sender_formatted,  # Use formatted sender with display name
             to=[recipient_email]
         )
         email.content_subtype = "html"  # Set email to HTML format

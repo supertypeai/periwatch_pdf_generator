@@ -157,11 +157,12 @@ REST_FRAMEWORK = {
     ]
 }
 
-# Email Configuration - Using Resend
-# Resend API Configuration
-RESEND_API_KEY = os.environ.get('RESEND_API_KEY')
-SENDGRID_API_KEY = os.environ.get('SENDGRID_API_KEY')
-DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@periwatch.com')
+# Email Configuration
+AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
+AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL')
+DEFAULT_FROM_NAME = os.environ.get('DEFAULT_FROM_NAME', 'Periwatch')
 SERVER_EMAIL = os.environ.get('SERVER_EMAIL', DEFAULT_FROM_EMAIL)
 
 # Legacy Django email settings (kept for fallback if needed)
