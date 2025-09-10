@@ -51,7 +51,7 @@ class PDFReportAPIView(APIView):
         email_text = request.GET.get('email', 'human@supertype.ai')
         ticker = request.GET.get('ticker', '')
         company = request.GET.get('company', '')
-        timeout_seconds = int(request.GET.get('timeout', 30))  # Default 30 seconds
+        timeout_seconds = int(request.GET.get('timeout', 10))  # Default 30 seconds
         
         if company:
             company = company.strip()
