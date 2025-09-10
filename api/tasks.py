@@ -126,7 +126,7 @@ class PDFGenerationTask:
             return pdf_buffer
         
     def generate_pdf_with_timeout(self, task_id, title_text, email_text, ticker, company, 
-                                  timeout_seconds=30, recipient_email=None):
+                                  timeout_seconds=15, recipient_email=None):
         """
         Generate PDF with timeout. Returns partial PDF if timeout, continues in background.
         """
